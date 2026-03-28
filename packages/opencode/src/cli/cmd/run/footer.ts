@@ -8,6 +8,7 @@ import {
   type KeyEvent,
   type ScrollbackWriter,
 } from "@opentui/core"
+import { Keybind } from "../../../util/keybind"
 import { directEntryWriter } from "./scrollback"
 import type { DirectEntryKind } from "./types"
 
@@ -15,6 +16,17 @@ const HIGHLIGHT_COLOR = "#38bdf8"
 const MUTED_COLOR = "#64748b"
 const TEXT_COLOR = "#f8fafc"
 const BORDER_COLOR = "#334155"
+
+const LEADER_TIMEOUT_MS = 2000
+const TEXTAREA_MIN_HEIGHT = 1
+const TEXTAREA_MAX_HEIGHT = 6
+
+const HINT_WIDTH_BREAKPOINTS = {
+  send: 50,
+  newline: 66,
+  history: 80,
+  variant: 95,
+}
 
 const EMPTY_BORDER = {
   topLeft: "",
@@ -30,23 +42,55 @@ const EMPTY_BORDER = {
   rightT: "",
 }
 
-function directTextareaKeybindings(): KeyBinding[] {
-  return [
-    { name: "return", action: "submit" },
-    { name: "linefeed", action: "submit" },
-    { name: "return", shift: true, action: "newline" },
-    { name: "linefeed", shift: true, action: "newline" },
-    { name: "return", ctrl: true, action: "newline" },
-    { name: "linefeed", ctrl: true, action: "newline" },
-    { name: "return", meta: true, action: "newline" },
-    { name: "linefeed", meta: true, action: "newline" },
-    { name: "j", ctrl: true, action: "newline" },
-  ]
-}
-
 function isExitCommand(input: string): boolean {
   const normalized = input.trim().toLowerCase()
   return normalized === "/exit" || normalized === "/quit"
+}
+
+function mapInputBindings(binding: string, action: "submit" | "newline"): KeyBinding[] {
+  return Keybind.parse(binding).map((item) => ({
+    name: item.name,
+    ctrl: item.ctrl || undefined,
+    meta: item.meta || undefined,
+    shift: item.shift || undefined,
+    super: item.super || undefined,
+    action,
+  }))
+}
+
+function directTextareaKeybindings(keybinds: DirectFooterKeybinds): KeyBinding[] {
+  return [
+    { name: "return", action: "submit" },
+    { name: "return", meta: true, action: "newline" },
+    ...mapInputBindings(keybinds.inputSubmit, "submit"),
+    ...mapInputBindings(keybinds.inputNewline, "newline"),
+  ]
+}
+
+function printableBinding(binding: string, leader: string): string {
+  const first = Keybind.parse(binding).at(0)
+  if (!first) {
+    return ""
+  }
+
+  let text = Keybind.toString(first)
+  const leaderKey = Keybind.parse(leader).at(0)
+  if (leaderKey) {
+    text = text.replace("<leader>", Keybind.toString(leaderKey))
+  }
+
+  return text
+}
+
+function toKeyInfo(event: KeyEvent, leader: boolean): Keybind.Info {
+  return {
+    name: event.name === " " ? "space" : event.name,
+    ctrl: !!event.ctrl,
+    meta: !!event.meta,
+    shift: !!event.shift,
+    super: !!event.super,
+    leader,
+  }
 }
 
 export type ScrollbackRenderer = CliRenderer & {
@@ -59,10 +103,32 @@ type FooterHistoryState = {
   draft: string
 }
 
+export type DirectFooterKeybinds = {
+  leader: string
+  variantCycle: string
+  inputSubmit: string
+  inputNewline: string
+}
+
+type VariantCycleResult = {
+  modelLabel?: string
+  status?: string
+}
+
+type DirectRunFooterOptions = {
+  agentLabel: string
+  modelLabel: string
+  keybinds: DirectFooterKeybinds
+  onCycleVariant?: () => VariantCycleResult | void
+}
+
 export class DirectRunFooter {
   private shell: BoxRenderable
   private composerFrame: BoxRenderable
   private composerArea: BoxRenderable
+  private topStatusRow: BoxRenderable
+  private topStatusSpinner: TextRenderable
+  private topStatusText: TextRenderable
   private composer: TextareaRenderable
   private metaRow: BoxRenderable
   private agentText: TextRenderable
@@ -70,26 +136,41 @@ export class DirectRunFooter {
   private separatorRow: BoxRenderable
   private separatorLine: BoxRenderable
   private footerRow: BoxRenderable
-  private statusText: TextRenderable
-  private hintText: TextRenderable
+  private footerSpacer: BoxRenderable
+  private hintGroup: BoxRenderable
+  private hintSendText: TextRenderable
+  private hintNewlineText: TextRenderable
+  private hintHistoryText: TextRenderable
+  private hintVariantText: TextRenderable
+  private hintExitText: TextRenderable
   private pendingInput: ((value: string | null) => void) | null = null
   private closed = false
   private busy = false
   private destroyed = false
-  private statusMessage = "ready"
+  private statusMessage = ""
+  private readonly agentLabel: string
+  private defaultStatus = ""
   private history: FooterHistoryState = {
     items: [],
     index: null,
     draft: "",
   }
 
+  private leaderBindings: Keybind.Info[]
+  private variantCycleBindings: Keybind.Info[]
+  private leaderActive = false
+  private leaderTimeout: NodeJS.Timeout | undefined
+  private variantHint: string
+
   constructor(
     private renderer: ScrollbackRenderer,
-    info: {
-      agentLabel: string
-      modelLabel: string
-    },
+    private options: DirectRunFooterOptions,
   ) {
+    this.agentLabel = options.agentLabel
+    this.leaderBindings = Keybind.parse(options.keybinds.leader)
+    this.variantCycleBindings = Keybind.parse(options.keybinds.variantCycle)
+    this.variantHint = printableBinding(options.keybinds.variantCycle, options.keybinds.leader)
+
     this.shell = new BoxRenderable(renderer, {
       id: "run-direct-footer-shell",
       width: "100%",
@@ -126,11 +207,40 @@ export class DirectRunFooter {
       backgroundColor: "transparent",
     })
 
+    this.topStatusRow = new BoxRenderable(renderer, {
+      id: "run-direct-footer-top-status-row",
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+      gap: 1,
+      flexShrink: 0,
+    })
+
+    this.topStatusSpinner = new TextRenderable(renderer, {
+      id: "run-direct-footer-top-status-spinner",
+      content: "[⋯]",
+      fg: HIGHLIGHT_COLOR,
+      wrapMode: "none",
+      truncate: true,
+      flexShrink: 0,
+      visible: false,
+    })
+
+    this.topStatusText = new TextRenderable(renderer, {
+      id: "run-direct-footer-top-status-text",
+      content: "",
+      fg: MUTED_COLOR,
+      wrapMode: "none",
+      truncate: true,
+      flexGrow: 1,
+      flexShrink: 1,
+    })
+
     this.composer = new TextareaRenderable(renderer, {
       id: "run-direct-footer-composer",
       width: "100%",
-      minHeight: 1,
-      maxHeight: 6,
+      minHeight: TEXTAREA_MIN_HEIGHT,
+      maxHeight: TEXTAREA_MAX_HEIGHT,
       wrapMode: "word",
       showCursor: true,
       placeholder: 'Ask anything... "Fix a TODO in the codebase"',
@@ -142,7 +252,7 @@ export class DirectRunFooter {
       cursorColor: TEXT_COLOR,
       onSubmit: this.handleSubmit,
       onKeyDown: this.handleComposerKeyDown,
-      keyBindings: directTextareaKeybindings(),
+      keyBindings: directTextareaKeybindings(options.keybinds),
     })
 
     this.metaRow = new BoxRenderable(renderer, {
@@ -156,15 +266,24 @@ export class DirectRunFooter {
 
     this.agentText = new TextRenderable(renderer, {
       id: "run-direct-footer-agent",
-      content: info.agentLabel,
+      content: options.agentLabel,
       fg: HIGHLIGHT_COLOR,
+      wrapMode: "none",
+      truncate: true,
+      flexShrink: 0,
     })
 
     this.modelText = new TextRenderable(renderer, {
       id: "run-direct-footer-model",
-      content: info.modelLabel,
+      content: options.modelLabel,
       fg: MUTED_COLOR,
+      wrapMode: "none",
+      truncate: true,
+      flexGrow: 1,
+      flexShrink: 1,
     })
+
+    this.defaultStatus = `${this.agentLabel} · ${options.modelLabel}`
 
     this.separatorRow = new BoxRenderable(renderer, {
       id: "run-direct-footer-separator-row",
@@ -199,29 +318,83 @@ export class DirectRunFooter {
       flexShrink: 0,
     })
 
-    this.statusText = new TextRenderable(renderer, {
-      id: "run-direct-footer-status",
-      content: "",
-      fg: TEXT_COLOR,
+    this.footerSpacer = new BoxRenderable(renderer, {
+      id: "run-direct-footer-spacer",
+      flexGrow: 1,
+      flexShrink: 1,
+      backgroundColor: "transparent",
     })
 
-    this.hintText = new TextRenderable(renderer, {
-      id: "run-direct-footer-hint",
-      content: "",
-      fg: MUTED_COLOR,
+    this.hintGroup = new BoxRenderable(renderer, {
+      id: "run-direct-footer-hint-group",
+      flexDirection: "row",
+      gap: 2,
+      flexShrink: 0,
+      justifyContent: "flex-end",
     })
+
+    this.hintSendText = new TextRenderable(renderer, {
+      id: "run-direct-footer-hint-send",
+      content: "Enter send",
+      fg: TEXT_COLOR,
+      wrapMode: "none",
+      truncate: true,
+    })
+
+    this.hintNewlineText = new TextRenderable(renderer, {
+      id: "run-direct-footer-hint-newline",
+      content: "Shift+Enter newline",
+      fg: MUTED_COLOR,
+      wrapMode: "none",
+      truncate: true,
+    })
+
+    this.hintHistoryText = new TextRenderable(renderer, {
+      id: "run-direct-footer-hint-history",
+      content: "Up/Down history",
+      fg: MUTED_COLOR,
+      wrapMode: "none",
+      truncate: true,
+    })
+
+    this.hintVariantText = new TextRenderable(renderer, {
+      id: "run-direct-footer-hint-variant",
+      content: this.variantHint ? `${this.variantHint} variant` : "",
+      fg: MUTED_COLOR,
+      wrapMode: "none",
+      truncate: true,
+      visible: false,
+    })
+
+    this.hintExitText = new TextRenderable(renderer, {
+      id: "run-direct-footer-hint-exit",
+      content: "/exit",
+      fg: MUTED_COLOR,
+      wrapMode: "none",
+      truncate: true,
+    })
+
+    this.topStatusRow.add(this.topStatusSpinner)
+    this.topStatusRow.add(this.topStatusText)
 
     this.metaRow.add(this.agentText)
     this.metaRow.add(this.modelText)
 
+    this.composerArea.add(this.topStatusRow)
     this.composerArea.add(this.composer)
     this.composerArea.add(this.metaRow)
     this.composerFrame.add(this.composerArea)
 
     this.separatorRow.add(this.separatorLine)
 
-    this.footerRow.add(this.statusText)
-    this.footerRow.add(this.hintText)
+    this.hintGroup.add(this.hintSendText)
+    this.hintGroup.add(this.hintNewlineText)
+    this.hintGroup.add(this.hintHistoryText)
+    this.hintGroup.add(this.hintVariantText)
+    this.hintGroup.add(this.hintExitText)
+
+    this.footerRow.add(this.footerSpacer)
+    this.footerRow.add(this.hintGroup)
 
     this.shell.add(this.composerFrame)
     this.shell.add(this.separatorRow)
@@ -229,6 +402,7 @@ export class DirectRunFooter {
     this.renderer.root.add(this.shell)
 
     this.composer.on("line-info-change", this.handleDraftChanged)
+    this.renderer.on(CliRenderEvents.RESIZE, this.handleResize)
     this.renderer.on(CliRenderEvents.DESTROY, this.handleDestroy)
     this.refreshFooterRow()
     this.composer.focus()
@@ -236,6 +410,12 @@ export class DirectRunFooter {
 
   public get isClosed(): boolean {
     return this.closed || this.destroyed || this.renderer.isDestroyed
+  }
+
+  public setModelLabel(label: string): void {
+    this.modelText.content = label
+    this.defaultStatus = `${this.agentLabel} · ${label}`
+    this.refreshFooterRow()
   }
 
   public setStatus(status: string): void {
@@ -248,9 +428,9 @@ export class DirectRunFooter {
     this.setStatus(status)
   }
 
-  public setIdle(status: string = "ready"): void {
+  public setIdle(status = ""): void {
     this.busy = false
-    this.setStatus(status)
+    this.setStatus(status || this.defaultStatus)
     this.composer.focus()
   }
 
@@ -265,7 +445,7 @@ export class DirectRunFooter {
       return Promise.resolve(null)
     }
 
-    this.setIdle("ready")
+    this.setIdle("")
     return new Promise((resolve) => {
       this.pendingInput = resolve
       this.composer.focus()
@@ -290,6 +470,11 @@ export class DirectRunFooter {
     this.destroyed = true
     this.closed = true
 
+    if (this.leaderTimeout) {
+      clearTimeout(this.leaderTimeout)
+      this.leaderTimeout = undefined
+    }
+
     const pending = this.pendingInput
     this.pendingInput = null
     pending?.(null)
@@ -297,6 +482,7 @@ export class DirectRunFooter {
     this.composer.off("line-info-change", this.handleDraftChanged)
     this.composer.onSubmit = undefined
     this.composer.onKeyDown = undefined
+    this.renderer.off(CliRenderEvents.RESIZE, this.handleResize)
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
 
     if (!this.renderer.isDestroyed) {
@@ -309,12 +495,132 @@ export class DirectRunFooter {
       return
     }
 
-    const draftLength = this.composer.isDestroyed ? 0 : this.composer.plainText.length
-    const busyLabel = this.busy ? "busy" : "idle"
-    this.statusText.content = `run -i · ${this.statusMessage} · ${busyLabel} · draft ${draftLength}`
-    this.hintText.content = this.busy
-      ? "waiting for response · /exit quit"
-      : "Enter send · Shift/Ctrl/Alt+Enter newline · Up/Down history · /exit quit"
+    const width = this.renderer.width
+    const statusText = this.busy
+      ? this.statusMessage || "assistant responding"
+      : this.statusMessage || this.defaultStatus
+
+    this.topStatusRow.visible = true
+    this.topStatusSpinner.visible = this.busy
+    this.topStatusText.content = statusText
+    this.topStatusText.fg = this.busy ? HIGHLIGHT_COLOR : MUTED_COLOR
+
+    if (this.busy) {
+      this.hintSendText.visible = false
+      this.hintNewlineText.visible = false
+      this.hintHistoryText.visible = false
+      this.hintVariantText.visible = false
+      this.hintExitText.visible = true
+      this.hintExitText.content = "/exit quit"
+      this.hintExitText.fg = TEXT_COLOR
+      this.updateFooterHeight()
+      return
+    }
+
+    this.hintSendText.visible = width >= HINT_WIDTH_BREAKPOINTS.send
+    this.hintNewlineText.visible = width >= HINT_WIDTH_BREAKPOINTS.newline
+    this.hintHistoryText.visible = width >= HINT_WIDTH_BREAKPOINTS.history
+    this.hintVariantText.visible = this.variantHint.length > 0 && width >= HINT_WIDTH_BREAKPOINTS.variant
+    this.hintExitText.visible = true
+    this.hintExitText.content = "/exit"
+    this.hintExitText.fg = MUTED_COLOR
+    this.updateFooterHeight()
+  }
+
+  private updateFooterHeight(): void {
+    if (this.destroyed || this.renderer.isDestroyed || this.composer.isDestroyed) {
+      return
+    }
+
+    const textareaRows = Math.max(
+      TEXTAREA_MIN_HEIGHT,
+      Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1),
+    )
+    const statusRows = 1
+
+    const composerRows =
+      1 + // composerArea paddingTop
+      statusRows +
+      textareaRows +
+      1 + // metaRow paddingTop
+      1 // meta row text
+
+    const totalFooterRows =
+      composerRows +
+      1 + // separator row
+      1 // footer hint row
+
+    this.renderer.footerHeight = totalFooterRows
+  }
+
+  private matches(bindings: Keybind.Info[], event: Keybind.Info): boolean {
+    for (const binding of bindings) {
+      if (Keybind.match(binding, event)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private clearLeader(): void {
+    this.leaderActive = false
+    if (this.leaderTimeout) {
+      clearTimeout(this.leaderTimeout)
+      this.leaderTimeout = undefined
+    }
+  }
+
+  private armLeader(): void {
+    this.clearLeader()
+    this.leaderActive = true
+    this.leaderTimeout = setTimeout(() => {
+      this.clearLeader()
+    }, LEADER_TIMEOUT_MS)
+  }
+
+  private runVariantCycle(): void {
+    const result = this.options.onCycleVariant?.()
+    if (!result) {
+      this.setStatus("no variants available")
+      return
+    }
+
+    if (result.modelLabel) {
+      this.setModelLabel(result.modelLabel)
+    }
+
+    this.setStatus(result.status ?? "variant updated")
+  }
+
+  private handleVariantCycleKey = (event: KeyEvent): boolean => {
+    const plain = toKeyInfo(event, false)
+
+    if (!this.leaderActive && this.matches(this.leaderBindings, plain)) {
+      this.armLeader()
+      event.preventDefault()
+      return true
+    }
+
+    if (this.leaderActive) {
+      const withLeader = toKeyInfo(event, true)
+      const matched = this.matches(this.variantCycleBindings, withLeader)
+      this.clearLeader()
+      event.preventDefault()
+
+      if (matched) {
+        this.runVariantCycle()
+      }
+
+      return true
+    }
+
+    if (this.matches(this.variantCycleBindings, plain)) {
+      this.runVariantCycle()
+      event.preventDefault()
+      return true
+    }
+
+    return false
   }
 
   private pushHistory(input: string): void {
@@ -386,6 +692,10 @@ export class DirectRunFooter {
       return
     }
 
+    if (this.handleVariantCycleKey(event)) {
+      return
+    }
+
     if (event.ctrl || event.meta || event.shift || event.super || event.hyper) {
       return
     }
@@ -438,8 +748,16 @@ export class DirectRunFooter {
     this.refreshFooterRow()
   }
 
+  private handleResize = (): void => {
+    this.refreshFooterRow()
+  }
+
   private handleDestroy = (): void => {
     this.closed = true
+    if (this.leaderTimeout) {
+      clearTimeout(this.leaderTimeout)
+      this.leaderTimeout = undefined
+    }
     const pending = this.pendingInput
     this.pendingInput = null
     pending?.(null)

@@ -1,9 +1,83 @@
 import { CliRenderer, createCliRenderer, type ScrollbackWriter } from "@opentui/core"
-import { DirectRunFooter, type ScrollbackRenderer } from "./footer"
+import { Config } from "../../../config/config"
+import { DirectRunFooter, type DirectFooterKeybinds, type ScrollbackRenderer } from "./footer"
 import { formatUnknownError, runDirectPromptTurn } from "./stream"
 import type { DirectRunInput } from "./types"
 
 const DIRECT_FOOTER_HEIGHT = 9
+
+const DEFAULT_DIRECT_KEYBINDS: DirectFooterKeybinds = {
+  leader: "ctrl+x",
+  variantCycle: "ctrl+t,<leader>t",
+  inputSubmit: "return",
+  inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+}
+
+function formatModelLabel(model: NonNullable<DirectRunInput["model"]>, variant: string | undefined): string {
+  const variantLabel = variant ? ` · ${variant}` : ""
+  return `${model.modelID} · ${model.providerID}${variantLabel}`
+}
+
+function cycleVariant(current: string | undefined, variants: string[]): string | undefined {
+  if (variants.length === 0) {
+    return undefined
+  }
+
+  if (!current) {
+    return variants[0]
+  }
+
+  const index = variants.indexOf(current)
+  if (index === -1 || index === variants.length - 1) {
+    return undefined
+  }
+
+  return variants[index + 1]
+}
+
+async function resolveModelVariants(sdk: DirectRunInput["sdk"], model: DirectRunInput["model"]): Promise<string[]> {
+  if (!model) {
+    return []
+  }
+
+  try {
+    const response = await sdk.provider.list()
+    const providers = response.data?.all ?? []
+    const provider = providers.find((item) => item.id === model.providerID)
+    const modelInfo = provider?.models?.[model.modelID]
+    return Object.keys(modelInfo?.variants ?? {})
+  } catch {
+    return []
+  }
+}
+
+async function resolveFooterKeybinds(): Promise<DirectFooterKeybinds> {
+  try {
+    const config = await Config.get()
+    const configuredLeader = config.keybinds?.leader?.trim() || DEFAULT_DIRECT_KEYBINDS.leader
+    const configuredVariantCycle = config.keybinds?.variant_cycle?.trim() || "ctrl+t"
+    const configuredSubmit = config.keybinds?.input_submit?.trim() || DEFAULT_DIRECT_KEYBINDS.inputSubmit
+    const configuredNewline = config.keybinds?.input_newline?.trim() || DEFAULT_DIRECT_KEYBINDS.inputNewline
+
+    const variantBindings = configuredVariantCycle
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+
+    if (!variantBindings.some((binding) => binding.toLowerCase() === "<leader>t")) {
+      variantBindings.push("<leader>t")
+    }
+
+    return {
+      leader: configuredLeader,
+      variantCycle: variantBindings.join(","),
+      inputSubmit: configuredSubmit,
+      inputNewline: configuredNewline,
+    }
+  } catch {
+    return DEFAULT_DIRECT_KEYBINDS
+  }
+}
 
 function ensureScrollbackApiAvailable(): void {
   const prototype = CliRenderer.prototype as CliRenderer & {
@@ -50,15 +124,20 @@ function directFooterLabels(input: Pick<DirectRunInput, "agent" | "model" | "var
     }
   }
 
-  const variantLabel = input.variant ? ` · ${input.variant}` : ""
   return {
     agentLabel,
-    modelLabel: `${input.model.modelID} · ${input.model.providerID}${variantLabel}`,
+    modelLabel: formatModelLabel(input.model, input.variant),
   }
 }
 
 export async function runDirectMode(input: DirectRunInput): Promise<void> {
   ensureScrollbackApiAvailable()
+
+  const [keybinds, variants] = await Promise.all([
+    resolveFooterKeybinds(),
+    resolveModelVariants(input.sdk, input.model),
+  ])
+  let activeVariant = input.variant
 
   const renderer = resolveScrollbackRenderer(
     await createCliRenderer({
@@ -76,7 +155,27 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
     }),
   )
 
-  const footer = new DirectRunFooter(renderer, directFooterLabels(input))
+  const footer = new DirectRunFooter(renderer, {
+    ...directFooterLabels({
+      agent: input.agent,
+      model: input.model,
+      variant: activeVariant,
+    }),
+    keybinds,
+    onCycleVariant: () => {
+      if (!input.model || variants.length === 0) {
+        return {
+          status: "no variants available",
+        }
+      }
+
+      activeVariant = cycleVariant(activeVariant, variants)
+      return {
+        status: activeVariant ? `variant ${activeVariant}` : "variant default",
+        modelLabel: formatModelLabel(input.model, activeVariant),
+      }
+    },
+  })
   renderer.start()
 
   try {
@@ -102,7 +201,7 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
           sessionID: input.sessionID,
           agent: input.agent,
           model: input.model,
-          variant: input.variant,
+          variant: activeVariant,
           prompt,
           files: input.files,
           includeFiles,
@@ -115,7 +214,7 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
       }
 
       prompt = undefined
-      footer.setIdle("ready")
+      footer.setIdle("")
     }
   } finally {
     footer.destroy()

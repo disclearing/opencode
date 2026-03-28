@@ -318,6 +318,8 @@ export const RunCommand = cmd({
       })
   },
   handler: async (args) => {
+    const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
+
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
       .join(" ")
@@ -707,7 +709,7 @@ export const RunCommand = cmd({
         model,
         variant: args.variant,
         files,
-        initialInput: message.trim().length > 0 ? message : undefined,
+        initialInput: rawMessage.trim().length > 0 ? rawMessage : undefined,
         thinking: args.thinking,
       })
       return
