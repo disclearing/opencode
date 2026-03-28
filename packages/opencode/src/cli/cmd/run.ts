@@ -27,11 +27,19 @@ import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
+import { runDirectMode } from "./run/runtime"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
   metadata: Tool.InferMetadata<T>
   part: ToolPart
+}
+
+type FilePart = {
+  type: "file"
+  url: string
+  filename: string
+  mime: string
 }
 
 function props<T extends Tool.Info>(part: ToolPart): ToolProps<T> {
@@ -302,11 +310,37 @@ export const RunCommand = cmd({
         describe: "show thinking blocks",
         default: false,
       })
+      .option("interactive", {
+        alias: ["i"],
+        type: "boolean",
+        describe: "run in direct interactive split-footer mode",
+        default: false,
+      })
   },
   handler: async (args) => {
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
       .join(" ")
+
+    if (args.interactive && args.command) {
+      UI.error("--interactive cannot be used with --command")
+      process.exit(1)
+    }
+
+    if (args.interactive && args.format === "json") {
+      UI.error("--interactive cannot be used with --format json")
+      process.exit(1)
+    }
+
+    if (args.interactive && !process.stdin.isTTY) {
+      UI.error("--interactive requires a TTY")
+      process.exit(1)
+    }
+
+    if (args.interactive && !process.stdout.isTTY) {
+      UI.error("--interactive requires a TTY stdout")
+      process.exit(1)
+    }
 
     const directory = (() => {
       if (!args.dir) return undefined
@@ -320,7 +354,7 @@ export const RunCommand = cmd({
       }
     })()
 
-    const files: { type: "file"; url: string; filename: string; mime: string }[] = []
+    const files: FilePart[] = []
     if (args.file) {
       const list = Array.isArray(args.file) ? args.file : [args.file]
 
@@ -344,7 +378,7 @@ export const RunCommand = cmd({
 
     if (!process.stdin.isTTY) message += "\n" + (await Bun.stdin.text())
 
-    if (message.trim().length === 0 && !args.command) {
+    if (message.trim().length === 0 && !args.command && !args.interactive) {
       UI.error("You must provide a message or a command")
       process.exit(1)
     }
@@ -389,7 +423,10 @@ export const RunCommand = cmd({
       if (baseID) return baseID
 
       const name = title()
-      const result = await sdk.session.create({ title: name, permission: rules })
+      const result = await sdk.session.create({
+        title: name,
+        permission: rules,
+      })
       return result.data?.id
     }
 
@@ -432,21 +469,27 @@ export const RunCommand = cmd({
 
       function emit(type: string, data: Record<string, unknown>) {
         if (args.format === "json") {
-          process.stdout.write(JSON.stringify({ type, timestamp: Date.now(), sessionID, ...data }) + EOL)
+          process.stdout.write(
+            JSON.stringify({
+              type,
+              timestamp: Date.now(),
+              sessionID,
+              ...data,
+            }) + EOL,
+          )
           return true
         }
         return false
       }
 
-      const events = await sdk.event.subscribe()
-      let error: string | undefined
-
-      async function loop() {
+      async function loop(events: Awaited<ReturnType<typeof sdk.event.subscribe>>) {
         const toggles = new Map<string, boolean>()
+        let error: string | undefined
 
         for await (const event of events.stream) {
           if (
             event.type === "message.updated" &&
+            event.properties.sessionID === sessionID &&
             event.properties.info.role === "assistant" &&
             args.format !== "json" &&
             toggles.get("start") !== true
@@ -626,21 +669,25 @@ export const RunCommand = cmd({
       }
       await share(sdk, sessionID)
 
-      loop().catch((e) => {
-        console.error(e)
-        process.exit(1)
-      })
-
-      if (args.command) {
-        await sdk.session.command({
-          sessionID,
-          agent,
-          model: args.model,
-          command: args.command,
-          arguments: message,
-          variant: args.variant,
+      if (!args.interactive) {
+        const events = await sdk.event.subscribe()
+        loop(events).catch((e) => {
+          console.error(e)
+          process.exit(1)
         })
-      } else {
+
+        if (args.command) {
+          await sdk.session.command({
+            sessionID,
+            agent,
+            model: args.model,
+            command: args.command,
+            arguments: message,
+            variant: args.variant,
+          })
+          return
+        }
+
         const model = args.model ? Provider.parseModel(args.model) : undefined
         await sdk.session.prompt({
           sessionID,
@@ -649,7 +696,21 @@ export const RunCommand = cmd({
           variant: args.variant,
           parts: [...files, { type: "text", text: message }],
         })
+        return
       }
+
+      const model = args.model ? Provider.parseModel(args.model) : undefined
+      await runDirectMode({
+        sdk,
+        sessionID,
+        agent,
+        model,
+        variant: args.variant,
+        files,
+        initialInput: message.trim().length > 0 ? message : undefined,
+        thinking: args.thinking,
+      })
+      return
     }
 
     if (args.attach) {
@@ -660,7 +721,11 @@ export const RunCommand = cmd({
         const auth = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
         return { Authorization: auth }
       })()
-      const sdk = createOpencodeClient({ baseUrl: args.attach, directory, headers })
+      const sdk = createOpencodeClient({
+        baseUrl: args.attach,
+        directory,
+        headers,
+      })
       return await execute(sdk)
     }
 
@@ -669,7 +734,10 @@ export const RunCommand = cmd({
         const request = new Request(input, init)
         return Server.Default().fetch(request)
       }) as typeof globalThis.fetch
-      const sdk = createOpencodeClient({ baseUrl: "http://opencode.internal", fetch: fetchFn })
+      const sdk = createOpencodeClient({
+        baseUrl: "http://opencode.internal",
+        fetch: fetchFn,
+      })
       await execute(sdk)
     })
   },
