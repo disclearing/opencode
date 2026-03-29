@@ -161,6 +161,8 @@ export class DirectRunFooter {
   private leaderActive = false
   private leaderTimeout: NodeJS.Timeout | undefined
   private variantHint: string
+  private footerBaseRows = 0
+  private composerRows = TEXTAREA_MIN_HEIGHT
 
   constructor(
     private renderer: ScrollbackRenderer,
@@ -254,6 +256,9 @@ export class DirectRunFooter {
       onKeyDown: this.handleComposerKeyDown,
       keyBindings: directTextareaKeybindings(options.keybinds),
     })
+
+    this.composerRows = Math.max(TEXTAREA_MIN_HEIGHT, Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1))
+    this.footerBaseRows = Math.max(1, this.renderer.footerHeight - this.composerRows)
 
     this.metaRow = new BoxRenderable(renderer, {
       id: "run-direct-footer-meta-row",
@@ -404,6 +409,7 @@ export class DirectRunFooter {
     this.composer.on("line-info-change", this.handleDraftChanged)
     this.renderer.on(CliRenderEvents.RESIZE, this.handleResize)
     this.renderer.on(CliRenderEvents.DESTROY, this.handleDestroy)
+    this.syncFooterHeightFromComposer()
     this.refreshFooterRow()
     this.composer.focus()
   }
@@ -513,7 +519,6 @@ export class DirectRunFooter {
       this.hintExitText.visible = true
       this.hintExitText.content = "/exit quit"
       this.hintExitText.fg = TEXT_COLOR
-      this.updateFooterHeight()
       return
     }
 
@@ -524,33 +529,28 @@ export class DirectRunFooter {
     this.hintExitText.visible = true
     this.hintExitText.content = "/exit"
     this.hintExitText.fg = MUTED_COLOR
-    this.updateFooterHeight()
   }
 
-  private updateFooterHeight(): void {
+  private syncFooterHeightFromComposer(): void {
     if (this.destroyed || this.renderer.isDestroyed || this.composer.isDestroyed) {
       return
     }
 
-    const textareaRows = Math.max(
-      TEXTAREA_MIN_HEIGHT,
-      Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1),
-    )
-    const statusRows = 1
+    const nextRows = Math.max(TEXTAREA_MIN_HEIGHT, Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1))
+    if (nextRows === this.composerRows) {
+      return
+    }
 
-    const composerRows =
-      1 + // composerArea paddingTop
-      statusRows +
-      textareaRows +
-      1 + // metaRow paddingTop
-      1 // meta row text
+    const delta = nextRows - this.composerRows
+    this.composerRows = nextRows
 
-    const totalFooterRows =
-      composerRows +
-      1 + // separator row
-      1 // footer hint row
+    const minHeight = this.footerBaseRows + TEXTAREA_MIN_HEIGHT
+    const maxHeight = this.footerBaseRows + TEXTAREA_MAX_HEIGHT
+    const nextHeight = Math.max(minHeight, Math.min(maxHeight, this.renderer.footerHeight + delta))
 
-    this.renderer.footerHeight = totalFooterRows
+    if (nextHeight !== this.renderer.footerHeight) {
+      this.renderer.footerHeight = nextHeight
+    }
   }
 
   private matches(bindings: Keybind.Info[], event: Keybind.Info): boolean {
@@ -737,6 +737,7 @@ export class DirectRunFooter {
 
     this.pushHistory(input)
     this.composer.setText("")
+    this.syncFooterHeightFromComposer()
     this.composer.focus()
 
     const pending = this.pendingInput
@@ -745,10 +746,12 @@ export class DirectRunFooter {
   }
 
   private handleDraftChanged = (): void => {
+    this.syncFooterHeightFromComposer()
     this.refreshFooterRow()
   }
 
   private handleResize = (): void => {
+    this.syncFooterHeightFromComposer()
     this.refreshFooterRow()
   }
 

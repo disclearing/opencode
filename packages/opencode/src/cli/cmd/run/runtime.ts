@@ -4,7 +4,7 @@ import { DirectRunFooter, type DirectFooterKeybinds, type ScrollbackRenderer } f
 import { formatUnknownError, runDirectPromptTurn } from "./stream"
 import type { DirectRunInput } from "./types"
 
-const DIRECT_FOOTER_HEIGHT = 9
+const DIRECT_FOOTER_HEIGHT = 7
 
 const DEFAULT_DIRECT_KEYBINDS: DirectFooterKeybinds = {
   leader: "ctrl+x",
@@ -155,6 +155,8 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
     }),
   )
 
+  renderer.start()
+
   const footer = new DirectRunFooter(renderer, {
     ...directFooterLabels({
       agent: input.agent,
@@ -176,7 +178,6 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
       }
     },
   })
-  renderer.start()
 
   try {
     footer.append("system", "Interactive direct mode enabled. Type /exit or /quit to finish.")

@@ -55,6 +55,11 @@ function lineColumns(line: string): number {
   return [...line].length
 }
 
+function blankRows(width: number, height: number): string {
+  const row = " ".repeat(Math.max(1, width))
+  return Array.from({ length: Math.max(1, height) }, () => row).join("\n")
+}
+
 function splitToken(token: string, width: number): string[] {
   const clampedWidth = Math.max(1, width)
   const chunks: string[] = []
@@ -162,6 +167,27 @@ function buildSnapshot(
   const boxWidth = Math.min(width, Math.max(3, textWidth + 1))
   const boxHeight = Math.max(3, bodyLines.length + 1)
 
+  const frame = new BoxRenderable(context.renderContext, {
+    id: `run-direct-frame-${snapshotNodeCounter++}`,
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width,
+    height: boxHeight,
+    border: false,
+    backgroundColor: "transparent",
+  })
+
+  const clearFill = new TextRenderable(context.renderContext, {
+    id: `run-direct-clear-${snapshotNodeCounter++}`,
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width,
+    height: boxHeight,
+    content: blankRows(width, boxHeight),
+  })
+
   const box = new BoxRenderable(context.renderContext, {
     id: `run-direct-box-${snapshotNodeCounter++}`,
     position: "absolute",
@@ -201,11 +227,14 @@ function buildSnapshot(
   box.add(headingText)
   box.add(bodyText)
 
+  frame.add(clearFill)
+  frame.add(box)
+
   return {
-    root: box,
-    width: boxWidth,
+    root: frame,
+    width,
     height: boxHeight,
-    rowColumns: boxWidth,
+    rowColumns: width,
     startOnNewLine: true,
     trailingNewline: true,
   }
