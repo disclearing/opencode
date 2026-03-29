@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2"
-import { runDirectPromptTurn } from "../../../src/cli/cmd/run/stream"
+import { runPromptTurn } from "../../../src/cli/cmd/run/stream"
 
 function eventStream(events: unknown[]) {
   return {
@@ -12,7 +12,7 @@ function eventStream(events: unknown[]) {
   }
 }
 
-describe("run direct stream", () => {
+describe("run stream", () => {
   test("keeps event order and ignores other sessions", async () => {
     const appended: Array<{ kind: string; text: string }> = []
     const busy: string[] = []
@@ -124,7 +124,7 @@ describe("run direct stream", () => {
       },
     } as unknown as OpencodeClient
 
-    await runDirectPromptTurn({
+    await runPromptTurn({
       sdk,
       sessionID: "session-1",
       agent: "agent",
@@ -215,7 +215,7 @@ describe("run direct stream", () => {
       },
     } as unknown as OpencodeClient
 
-    await runDirectPromptTurn({
+    await runPromptTurn({
       sdk,
       sessionID: "session-1",
       agent: undefined,

@@ -1,24 +1,24 @@
 import path from "path"
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
-import type { DirectRunFilePart, DirectRunInput } from "./types"
+import type { RunFilePart, RunInput } from "./types"
 
-type DirectRunView = {
+type RunView = {
   readonly isClosed: boolean
   append: (kind: "system" | "user" | "assistant" | "tool" | "error", text: string) => void
   setBusy: (status: string) => void
 }
 
-type DirectTurnInput = {
+type TurnInput = {
   sdk: OpencodeClient
   sessionID: string
   agent: string | undefined
-  model: DirectRunInput["model"]
+  model: RunInput["model"]
   variant: string | undefined
   prompt: string
-  files: DirectRunFilePart[]
+  files: RunFilePart[]
   includeFiles: boolean
   thinking: boolean
-  footer: DirectRunView
+  footer: RunView
 }
 
 function normalizePath(input?: string): string {
@@ -138,7 +138,7 @@ export function formatUnknownError(error: unknown): string {
   return "unknown error"
 }
 
-export async function runDirectPromptTurn(input: DirectTurnInput): Promise<void> {
+export async function runPromptTurn(input: TurnInput): Promise<void> {
   const abort = new AbortController()
   const events = await input.sdk.event.subscribe(undefined, {
     signal: abort.signal,

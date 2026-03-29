@@ -5,9 +5,9 @@ import {
   type ScrollbackSnapshot,
   type ScrollbackWriter,
 } from "@opentui/core"
-import type { DirectEntryKind } from "./types"
+import type { EntryKind } from "./types"
 
-type DirectEntryStyle = {
+type EntryStyle = {
   label: string
   border: string
   heading: string
@@ -16,7 +16,7 @@ type DirectEntryStyle = {
 
 const MAX_ENTRY_WIDTH = 92
 
-const DIRECT_ENTRY_STYLES: Record<DirectEntryKind, DirectEntryStyle> = {
+const ENTRY_STYLES: Record<EntryKind, EntryStyle> = {
   system: {
     label: "SYSTEM",
     border: "#64748b",
@@ -149,12 +149,12 @@ function formatTimestamp(timestamp: Date): string {
 }
 
 function buildSnapshot(
-  kind: DirectEntryKind,
+  kind: EntryKind,
   text: string,
   timestamp: Date,
   context: ScrollbackRenderContext,
 ): ScrollbackSnapshot {
-  const style = DIRECT_ENTRY_STYLES[kind]
+  const style = ENTRY_STYLES[kind]
   const width = Math.max(3, context.width)
   const maxTextWidth = Math.max(18, Math.min(width - 3, MAX_ENTRY_WIDTH))
   const headingCore = truncateText(`${style.label} | ${formatTimestamp(timestamp)}`, maxTextWidth - 1)
@@ -240,6 +240,6 @@ function buildSnapshot(
   }
 }
 
-export function directEntryWriter(kind: DirectEntryKind, text: string, timestamp: Date = new Date()): ScrollbackWriter {
+export function entryWriter(kind: EntryKind, text: string, timestamp: Date = new Date()): ScrollbackWriter {
   return (context) => buildSnapshot(kind, text.replace(/\r/g, ""), timestamp, context)
 }

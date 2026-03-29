@@ -1,19 +1,19 @@
-import { CliRenderer, createCliRenderer, type ScrollbackWriter } from "@opentui/core"
-import { Config } from "../../../config/config"
-import { DirectRunFooter, type DirectFooterKeybinds, type ScrollbackRenderer } from "./footer"
-import { formatUnknownError, runDirectPromptTurn } from "./stream"
-import type { DirectRunInput } from "./types"
+import { createCliRenderer } from "@opentui/core"
+import { TuiConfig } from "../../../config/tui"
+import { RunFooter, type FooterKeybinds } from "./footer"
+import { formatUnknownError, runPromptTurn } from "./stream"
+import type { RunInput } from "./types"
 
-const DIRECT_FOOTER_HEIGHT = 7
+const FOOTER_HEIGHT = 7
 
-const DEFAULT_DIRECT_KEYBINDS: DirectFooterKeybinds = {
+const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
   variantCycle: "ctrl+t,<leader>t",
   inputSubmit: "return",
   inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
 }
 
-function formatModelLabel(model: NonNullable<DirectRunInput["model"]>, variant: string | undefined): string {
+function formatModelLabel(model: NonNullable<RunInput["model"]>, variant: string | undefined): string {
   const variantLabel = variant ? ` · ${variant}` : ""
   return `${model.modelID} · ${model.providerID}${variantLabel}`
 }
@@ -35,7 +35,7 @@ function cycleVariant(current: string | undefined, variants: string[]): string |
   return variants[index + 1]
 }
 
-async function resolveModelVariants(sdk: DirectRunInput["sdk"], model: DirectRunInput["model"]): Promise<string[]> {
+async function resolveModelVariants(sdk: RunInput["sdk"], model: RunInput["model"]): Promise<string[]> {
   if (!model) {
     return []
   }
@@ -51,13 +51,13 @@ async function resolveModelVariants(sdk: DirectRunInput["sdk"], model: DirectRun
   }
 }
 
-async function resolveFooterKeybinds(): Promise<DirectFooterKeybinds> {
+async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
   try {
-    const config = await Config.get()
-    const configuredLeader = config.keybinds?.leader?.trim() || DEFAULT_DIRECT_KEYBINDS.leader
+    const config = await TuiConfig.get()
+    const configuredLeader = config.keybinds?.leader?.trim() || DEFAULT_KEYBINDS.leader
     const configuredVariantCycle = config.keybinds?.variant_cycle?.trim() || "ctrl+t"
-    const configuredSubmit = config.keybinds?.input_submit?.trim() || DEFAULT_DIRECT_KEYBINDS.inputSubmit
-    const configuredNewline = config.keybinds?.input_newline?.trim() || DEFAULT_DIRECT_KEYBINDS.inputNewline
+    const configuredSubmit = config.keybinds?.input_submit?.trim() || DEFAULT_KEYBINDS.inputSubmit
+    const configuredNewline = config.keybinds?.input_newline?.trim() || DEFAULT_KEYBINDS.inputNewline
 
     const variantBindings = configuredVariantCycle
       .split(",")
@@ -75,43 +75,11 @@ async function resolveFooterKeybinds(): Promise<DirectFooterKeybinds> {
       inputNewline: configuredNewline,
     }
   } catch {
-    return DEFAULT_DIRECT_KEYBINDS
+    return DEFAULT_KEYBINDS
   }
 }
 
-function ensureScrollbackApiAvailable(): void {
-  const prototype = CliRenderer.prototype as CliRenderer & {
-    writeToScrollback?: unknown
-  }
-
-  if (typeof prototype.writeToScrollback === "function") {
-    return
-  }
-
-  throw new Error(
-    'run --interactive requires @opentui/core with writeToScrollback(). Link your local cli-render-api worktree (e.g. "bun link @opentui/core") before running this mode.',
-  )
-}
-
-function resolveScrollbackRenderer(renderer: CliRenderer): ScrollbackRenderer {
-  const candidate = renderer as CliRenderer & {
-    writeToScrollback?: (write: ScrollbackWriter) => void
-  }
-
-  if (typeof candidate.writeToScrollback === "function") {
-    return candidate as ScrollbackRenderer
-  }
-
-  if (!renderer.isDestroyed) {
-    renderer.destroy()
-  }
-
-  throw new Error(
-    'run --interactive requires @opentui/core with writeToScrollback(). Link your local cli-render-api worktree (e.g. "bun link @opentui/core") before running this mode.',
-  )
-}
-
-function directFooterLabels(input: Pick<DirectRunInput, "agent" | "model" | "variant">): {
+function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): {
   agentLabel: string
   modelLabel: string
 } {
@@ -130,35 +98,31 @@ function directFooterLabels(input: Pick<DirectRunInput, "agent" | "model" | "var
   }
 }
 
-export async function runDirectMode(input: DirectRunInput): Promise<void> {
-  ensureScrollbackApiAvailable()
-
+export async function runInteractiveMode(input: RunInput): Promise<void> {
   const [keybinds, variants] = await Promise.all([
     resolveFooterKeybinds(),
     resolveModelVariants(input.sdk, input.model),
   ])
   let activeVariant = input.variant
 
-  const renderer = resolveScrollbackRenderer(
-    await createCliRenderer({
-      targetFps: 30,
-      maxFps: 60,
-      useMouse: false,
-      autoFocus: false,
-      openConsoleOnError: false,
-      exitOnCtrlC: true,
-      useKittyKeyboard: { events: process.platform === "win32" },
-      screenMode: "split-footer",
-      footerHeight: DIRECT_FOOTER_HEIGHT,
-      externalOutputMode: "capture-stdout",
-      consoleMode: "disabled",
-    }),
-  )
+  const renderer = await createCliRenderer({
+    targetFps: 30,
+    maxFps: 60,
+    useMouse: false,
+    autoFocus: false,
+    openConsoleOnError: false,
+    exitOnCtrlC: true,
+    useKittyKeyboard: { events: process.platform === "win32" },
+    screenMode: "split-footer",
+    footerHeight: FOOTER_HEIGHT,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+  })
 
   renderer.start()
 
-  const footer = new DirectRunFooter(renderer, {
-    ...directFooterLabels({
+  const footer = new RunFooter(renderer, {
+    ...footerLabels({
       agent: input.agent,
       model: input.model,
       variant: activeVariant,
@@ -180,7 +144,7 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
   })
 
   try {
-    footer.append("system", "Interactive direct mode enabled. Type /exit or /quit to finish.")
+    footer.append("system", "Interactive mode enabled. Type /exit or /quit to finish.")
 
     let includeFiles = true
     let prompt: string | null | undefined = input.initialInput?.trim() ? input.initialInput : undefined
@@ -197,7 +161,7 @@ export async function runDirectMode(input: DirectRunInput): Promise<void> {
       footer.setBusy("sending prompt")
 
       try {
-        await runDirectPromptTurn({
+        await runPromptTurn({
           sdk: input.sdk,
           sessionID: input.sessionID,
           agent: input.agent,

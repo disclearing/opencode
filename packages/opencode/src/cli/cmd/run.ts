@@ -27,7 +27,7 @@ import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
-import { runDirectMode } from "./run/runtime"
+import { runInteractiveMode } from "./run/runtime"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -702,7 +702,7 @@ export const RunCommand = cmd({
       }
 
       const model = args.model ? Provider.parseModel(args.model) : undefined
-      await runDirectMode({
+      await runInteractiveMode({
         sdk,
         sessionID,
         agent,

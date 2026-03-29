@@ -6,11 +6,10 @@ import {
   type CliRenderer,
   type KeyBinding,
   type KeyEvent,
-  type ScrollbackWriter,
 } from "@opentui/core"
 import { Keybind } from "../../../util/keybind"
-import { directEntryWriter } from "./scrollback"
-import type { DirectEntryKind } from "./types"
+import { entryWriter } from "./scrollback"
+import type { EntryKind } from "./types"
 
 const HIGHLIGHT_COLOR = "#38bdf8"
 const MUTED_COLOR = "#64748b"
@@ -58,7 +57,7 @@ function mapInputBindings(binding: string, action: "submit" | "newline"): KeyBin
   }))
 }
 
-function directTextareaKeybindings(keybinds: DirectFooterKeybinds): KeyBinding[] {
+function textareaKeybindings(keybinds: FooterKeybinds): KeyBinding[] {
   return [
     { name: "return", action: "submit" },
     { name: "return", meta: true, action: "newline" },
@@ -93,17 +92,13 @@ function toKeyInfo(event: KeyEvent, leader: boolean): Keybind.Info {
   }
 }
 
-export type ScrollbackRenderer = CliRenderer & {
-  writeToScrollback: (write: ScrollbackWriter) => void
-}
-
 type FooterHistoryState = {
   items: string[]
   index: number | null
   draft: string
 }
 
-export type DirectFooterKeybinds = {
+export type FooterKeybinds = {
   leader: string
   variantCycle: string
   inputSubmit: string
@@ -115,14 +110,14 @@ type VariantCycleResult = {
   status?: string
 }
 
-type DirectRunFooterOptions = {
+type RunFooterOptions = {
   agentLabel: string
   modelLabel: string
-  keybinds: DirectFooterKeybinds
+  keybinds: FooterKeybinds
   onCycleVariant?: () => VariantCycleResult | void
 }
 
-export class DirectRunFooter {
+export class RunFooter {
   private shell: BoxRenderable
   private composerFrame: BoxRenderable
   private composerArea: BoxRenderable
@@ -165,8 +160,8 @@ export class DirectRunFooter {
   private composerRows = TEXTAREA_MIN_HEIGHT
 
   constructor(
-    private renderer: ScrollbackRenderer,
-    private options: DirectRunFooterOptions,
+    private renderer: CliRenderer,
+    private options: RunFooterOptions,
   ) {
     this.agentLabel = options.agentLabel
     this.leaderBindings = Keybind.parse(options.keybinds.leader)
@@ -254,10 +249,13 @@ export class DirectRunFooter {
       cursorColor: TEXT_COLOR,
       onSubmit: this.handleSubmit,
       onKeyDown: this.handleComposerKeyDown,
-      keyBindings: directTextareaKeybindings(options.keybinds),
+      keyBindings: textareaKeybindings(options.keybinds),
     })
 
-    this.composerRows = Math.max(TEXTAREA_MIN_HEIGHT, Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1))
+    this.composerRows = Math.max(
+      TEXTAREA_MIN_HEIGHT,
+      Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1),
+    )
     this.footerBaseRows = Math.max(1, this.renderer.footerHeight - this.composerRows)
 
     this.metaRow = new BoxRenderable(renderer, {
@@ -440,10 +438,10 @@ export class DirectRunFooter {
     this.composer.focus()
   }
 
-  public append(kind: DirectEntryKind, text: string): void {
+  public append(kind: EntryKind, text: string): void {
     if (this.destroyed || this.renderer.isDestroyed) return
     if (text.trim().length === 0) return
-    this.renderer.writeToScrollback(directEntryWriter(kind, text, new Date()))
+    this.renderer.writeToScrollback(entryWriter(kind, text, new Date()))
   }
 
   public waitForInput(): Promise<string | null> {

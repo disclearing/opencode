@@ -1,6 +1,6 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 
-export type DirectRunFilePart = {
+export type RunFilePart = {
   type: "file"
   url: string
   filename: string
@@ -9,15 +9,15 @@ export type DirectRunFilePart = {
 
 type PromptModel = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 
-export type DirectRunInput = {
+export type RunInput = {
   sdk: OpencodeClient
   sessionID: string
   agent: string | undefined
   model: PromptModel | undefined
   variant: string | undefined
-  files: DirectRunFilePart[]
+  files: RunFilePart[]
   initialInput?: string
   thinking: boolean
 }
 
-export type DirectEntryKind = "system" | "user" | "assistant" | "tool" | "error"
+export type EntryKind = "system" | "user" | "assistant" | "tool" | "error"
