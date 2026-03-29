@@ -33,6 +33,13 @@ export type FooterState = {
 
 export type FooterPatch = Partial<FooterState>
 
+export type FooterKeybinds = {
+  leader: string
+  variantCycle: string
+  inputSubmit: string
+  inputNewline: string
+}
+
 export type FooterApi = {
   readonly isClosed: boolean
   onPrompt(fn: (text: string) => void): () => void

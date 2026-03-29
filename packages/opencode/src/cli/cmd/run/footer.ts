@@ -1,111 +1,11 @@
-import {
-  BoxRenderable,
-  CliRenderEvents,
-  TextRenderable,
-  TextareaRenderable,
-  type CliRenderer,
-  type KeyBinding,
-  type KeyEvent,
-} from "@opentui/core"
-import { Keybind } from "../../../util/keybind"
+import { CliRenderEvents, type CliRenderer } from "@opentui/core"
+import { render } from "@opentui/solid"
+import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
+import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
 import { entryWriter } from "./scrollback"
-import type { EntryKind, FooterApi, FooterPatch, FooterState } from "./types"
+import type { EntryKind, FooterApi, FooterKeybinds, FooterPatch, FooterState } from "./types"
 
-const HIGHLIGHT_COLOR = "#38bdf8"
-const MUTED_COLOR = "#64748b"
-const TEXT_COLOR = "#f8fafc"
-const BORDER_COLOR = "#334155"
-
-const LEADER_TIMEOUT_MS = 2000
-const TEXTAREA_MIN_HEIGHT = 1
-const TEXTAREA_MAX_HEIGHT = 6
-
-const HINT_WIDTH_BREAKPOINTS = {
-  send: 50,
-  newline: 66,
-  history: 80,
-  variant: 95,
-}
-
-const EMPTY_BORDER = {
-  topLeft: "",
-  bottomLeft: "",
-  vertical: "",
-  topRight: "",
-  bottomRight: "",
-  horizontal: " ",
-  bottomT: "",
-  topT: "",
-  cross: "",
-  leftT: "",
-  rightT: "",
-}
-
-function isExitCommand(input: string): boolean {
-  const normalized = input.trim().toLowerCase()
-  return normalized === "/exit" || normalized === "/quit"
-}
-
-function mapInputBindings(binding: string, action: "submit" | "newline"): KeyBinding[] {
-  return Keybind.parse(binding).map((item) => ({
-    name: item.name,
-    ctrl: item.ctrl || undefined,
-    meta: item.meta || undefined,
-    shift: item.shift || undefined,
-    super: item.super || undefined,
-    action,
-  }))
-}
-
-function textareaKeybindings(keybinds: FooterKeybinds): KeyBinding[] {
-  return [
-    { name: "return", action: "submit" },
-    { name: "return", meta: true, action: "newline" },
-    ...mapInputBindings(keybinds.inputSubmit, "submit"),
-    ...mapInputBindings(keybinds.inputNewline, "newline"),
-  ]
-}
-
-function printableBinding(binding: string, leader: string): string {
-  const first = Keybind.parse(binding).at(0)
-  if (!first) {
-    return ""
-  }
-
-  let text = Keybind.toString(first)
-  const leaderKey = Keybind.parse(leader).at(0)
-  if (leaderKey) {
-    text = text.replace("<leader>", Keybind.toString(leaderKey))
-  }
-
-  return text
-}
-
-function toKeyInfo(event: KeyEvent, leader: boolean): Keybind.Info {
-  return {
-    name: event.name === " " ? "space" : event.name,
-    ctrl: !!event.ctrl,
-    meta: !!event.meta,
-    shift: !!event.shift,
-    super: !!event.super,
-    leader,
-  }
-}
-
-type FooterHistoryState = {
-  items: string[]
-  index: number | null
-  draft: string
-}
-
-export type FooterKeybinds = {
-  leader: string
-  variantCycle: string
-  inputSubmit: string
-  inputNewline: string
-}
-
-type VariantCycleResult = {
+type CycleResult = {
   modelLabel?: string
   status?: string
 }
@@ -114,305 +14,53 @@ type RunFooterOptions = {
   agentLabel: string
   modelLabel: string
   keybinds: FooterKeybinds
-  onCycleVariant?: () => VariantCycleResult | void
+  onCycleVariant?: () => CycleResult | void
 }
 
 export class RunFooter implements FooterApi {
-  private shell: BoxRenderable
-  private composerFrame: BoxRenderable
-  private composerArea: BoxRenderable
-  private topStatusRow: BoxRenderable
-  private topStatusSpinner: TextRenderable
-  private topStatusText: TextRenderable
-  private composer: TextareaRenderable
-  private metaRow: BoxRenderable
-  private agentText: TextRenderable
-  private modelText: TextRenderable
-  private separatorRow: BoxRenderable
-  private separatorLine: BoxRenderable
-  private footerRow: BoxRenderable
-  private footerSpacer: BoxRenderable
-  private hintGroup: BoxRenderable
-  private hintSendText: TextRenderable
-  private hintNewlineText: TextRenderable
-  private hintHistoryText: TextRenderable
-  private hintVariantText: TextRenderable
-  private hintExitText: TextRenderable
   private closed = false
   private destroyed = false
-  private readonly agentLabel: string
-  private state: FooterState
   private prompts = new Set<(text: string) => void>()
   private closes = new Set<() => void>()
-  private history: FooterHistoryState = {
-    items: [],
-    index: null,
-    draft: "",
-  }
-
-  private leaderBindings: Keybind.Info[]
-  private variantCycleBindings: Keybind.Info[]
-  private leaderActive = false
-  private leaderTimeout: NodeJS.Timeout | undefined
-  private variantHint: string
-  private footerBaseRows = 0
-  private composerRows = TEXTAREA_MIN_HEIGHT
+  private base: number
+  private rows = TEXTAREA_MIN_ROWS
+  private state: Accessor<FooterState>
+  private setState: Setter<FooterState>
 
   constructor(
     private renderer: CliRenderer,
     private options: RunFooterOptions,
   ) {
-    this.agentLabel = options.agentLabel
-    this.leaderBindings = Keybind.parse(options.keybinds.leader)
-    this.variantCycleBindings = Keybind.parse(options.keybinds.variantCycle)
-    this.variantHint = printableBinding(options.keybinds.variantCycle, options.keybinds.leader)
-    this.state = {
+    const [state, setState] = createSignal<FooterState>({
       phase: "idle",
       status: "",
       queue: 0,
       model: options.modelLabel,
-    }
-
-    this.shell = new BoxRenderable(renderer, {
-      id: "run-direct-footer-shell",
-      width: "100%",
-      height: "100%",
-      border: false,
-      backgroundColor: "transparent",
-      padding: 0,
-      gap: 0,
-      flexDirection: "column",
     })
+    this.state = state
+    this.setState = setState
+    this.base = Math.max(1, renderer.footerHeight - TEXTAREA_MIN_ROWS)
 
-    this.composerFrame = new BoxRenderable(renderer, {
-      id: "run-direct-footer-composer-frame",
-      width: "100%",
-      flexShrink: 0,
-      border: ["left"],
-      borderColor: HIGHLIGHT_COLOR,
-      customBorderChars: {
-        ...EMPTY_BORDER,
-        vertical: "┃",
-        bottomLeft: "╹",
-      },
-    })
-
-    this.composerArea = new BoxRenderable(renderer, {
-      id: "run-direct-footer-composer-area",
-      width: "100%",
-      flexGrow: 1,
-      paddingLeft: 2,
-      paddingRight: 2,
-      paddingTop: 1,
-      gap: 0,
-      flexDirection: "column",
-      backgroundColor: "transparent",
-    })
-
-    this.topStatusRow = new BoxRenderable(renderer, {
-      id: "run-direct-footer-top-status-row",
-      width: "100%",
-      height: 1,
-      flexDirection: "row",
-      gap: 1,
-      flexShrink: 0,
-    })
-
-    this.topStatusSpinner = new TextRenderable(renderer, {
-      id: "run-direct-footer-top-status-spinner",
-      content: "[⋯]",
-      fg: HIGHLIGHT_COLOR,
-      wrapMode: "none",
-      truncate: true,
-      flexShrink: 0,
-      visible: false,
-    })
-
-    this.topStatusText = new TextRenderable(renderer, {
-      id: "run-direct-footer-top-status-text",
-      content: "",
-      fg: MUTED_COLOR,
-      wrapMode: "none",
-      truncate: true,
-      flexGrow: 1,
-      flexShrink: 1,
-    })
-
-    this.composer = new TextareaRenderable(renderer, {
-      id: "run-direct-footer-composer",
-      width: "100%",
-      minHeight: TEXTAREA_MIN_HEIGHT,
-      maxHeight: TEXTAREA_MAX_HEIGHT,
-      wrapMode: "word",
-      showCursor: true,
-      placeholder: 'Ask anything... "Fix a TODO in the codebase"',
-      placeholderColor: MUTED_COLOR,
-      textColor: TEXT_COLOR,
-      focusedTextColor: TEXT_COLOR,
-      backgroundColor: "transparent",
-      focusedBackgroundColor: "transparent",
-      cursorColor: TEXT_COLOR,
-      onSubmit: this.handleSubmit,
-      onKeyDown: this.handleComposerKeyDown,
-      keyBindings: textareaKeybindings(options.keybinds),
-    })
-
-    this.composerRows = Math.max(
-      TEXTAREA_MIN_HEIGHT,
-      Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1),
-    )
-    this.footerBaseRows = Math.max(1, this.renderer.footerHeight - this.composerRows)
-
-    this.metaRow = new BoxRenderable(renderer, {
-      id: "run-direct-footer-meta-row",
-      width: "100%",
-      flexDirection: "row",
-      gap: 1,
-      paddingTop: 1,
-      flexShrink: 0,
-    })
-
-    this.agentText = new TextRenderable(renderer, {
-      id: "run-direct-footer-agent",
-      content: options.agentLabel,
-      fg: HIGHLIGHT_COLOR,
-      wrapMode: "none",
-      truncate: true,
-      flexShrink: 0,
-    })
-
-    this.modelText = new TextRenderable(renderer, {
-      id: "run-direct-footer-model",
-      content: this.state.model,
-      fg: MUTED_COLOR,
-      wrapMode: "none",
-      truncate: true,
-      flexGrow: 1,
-      flexShrink: 1,
-    })
-
-    this.separatorRow = new BoxRenderable(renderer, {
-      id: "run-direct-footer-separator-row",
-      width: "100%",
-      height: 1,
-      border: ["left"],
-      borderColor: HIGHLIGHT_COLOR,
-      customBorderChars: {
-        ...EMPTY_BORDER,
-        vertical: "╹",
-      },
-    })
-
-    this.separatorLine = new BoxRenderable(renderer, {
-      id: "run-direct-footer-separator-line",
-      width: "100%",
-      height: 1,
-      border: ["bottom"],
-      borderColor: BORDER_COLOR,
-      customBorderChars: {
-        ...EMPTY_BORDER,
-        horizontal: "─",
-      },
-    })
-
-    this.footerRow = new BoxRenderable(renderer, {
-      id: "run-direct-footer-row",
-      width: "100%",
-      flexDirection: "row",
-      justifyContent: "space-between",
-      gap: 1,
-      flexShrink: 0,
-    })
-
-    this.footerSpacer = new BoxRenderable(renderer, {
-      id: "run-direct-footer-spacer",
-      flexGrow: 1,
-      flexShrink: 1,
-      backgroundColor: "transparent",
-    })
-
-    this.hintGroup = new BoxRenderable(renderer, {
-      id: "run-direct-footer-hint-group",
-      flexDirection: "row",
-      gap: 2,
-      flexShrink: 0,
-      justifyContent: "flex-end",
-    })
-
-    this.hintSendText = new TextRenderable(renderer, {
-      id: "run-direct-footer-hint-send",
-      content: "Enter send",
-      fg: TEXT_COLOR,
-      wrapMode: "none",
-      truncate: true,
-    })
-
-    this.hintNewlineText = new TextRenderable(renderer, {
-      id: "run-direct-footer-hint-newline",
-      content: "Shift+Enter newline",
-      fg: MUTED_COLOR,
-      wrapMode: "none",
-      truncate: true,
-    })
-
-    this.hintHistoryText = new TextRenderable(renderer, {
-      id: "run-direct-footer-hint-history",
-      content: "Up/Down history",
-      fg: MUTED_COLOR,
-      wrapMode: "none",
-      truncate: true,
-    })
-
-    this.hintVariantText = new TextRenderable(renderer, {
-      id: "run-direct-footer-hint-variant",
-      content: this.variantHint ? `${this.variantHint} variant` : "",
-      fg: MUTED_COLOR,
-      wrapMode: "none",
-      truncate: true,
-      visible: false,
-    })
-
-    this.hintExitText = new TextRenderable(renderer, {
-      id: "run-direct-footer-hint-exit",
-      content: "/exit",
-      fg: MUTED_COLOR,
-      wrapMode: "none",
-      truncate: true,
-    })
-
-    this.topStatusRow.add(this.topStatusSpinner)
-    this.topStatusRow.add(this.topStatusText)
-
-    this.metaRow.add(this.agentText)
-    this.metaRow.add(this.modelText)
-
-    this.composerArea.add(this.topStatusRow)
-    this.composerArea.add(this.composer)
-    this.composerArea.add(this.metaRow)
-    this.composerFrame.add(this.composerArea)
-
-    this.separatorRow.add(this.separatorLine)
-
-    this.hintGroup.add(this.hintSendText)
-    this.hintGroup.add(this.hintNewlineText)
-    this.hintGroup.add(this.hintHistoryText)
-    this.hintGroup.add(this.hintVariantText)
-    this.hintGroup.add(this.hintExitText)
-
-    this.footerRow.add(this.footerSpacer)
-    this.footerRow.add(this.hintGroup)
-
-    this.shell.add(this.composerFrame)
-    this.shell.add(this.separatorRow)
-    this.shell.add(this.footerRow)
-    this.renderer.root.add(this.shell)
-
-    this.composer.on("line-info-change", this.handleDraftChanged)
-    this.renderer.on(CliRenderEvents.RESIZE, this.handleResize)
     this.renderer.on(CliRenderEvents.DESTROY, this.handleDestroy)
-    this.syncFooterHeightFromComposer()
-    this.refreshFooterRow()
-    this.composer.focus()
+
+    void render(
+      () =>
+        createComponent(RunFooterView, {
+          state: this.state,
+          keybinds: options.keybinds,
+          agent: options.agentLabel,
+          onSubmit: this.handlePrompt,
+          onCycle: this.handleCycle,
+          onExit: () => this.close(),
+          onRows: this.syncRows,
+          onStatus: this.setStatus,
+        }),
+      this.renderer as unknown as Parameters<typeof render>[1],
+    ).catch(() => {
+      if (!this.destroyed && !this.renderer.isDestroyed) {
+        this.close()
+      }
+    })
   }
 
   public get isClosed(): boolean {
@@ -443,33 +91,23 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    if ("phase" in next && next.phase) {
-      this.state.phase = next.phase
-    }
-
-    if ("status" in next && typeof next.status === "string") {
-      this.state.status = next.status
-    }
-
-    if ("queue" in next && typeof next.queue === "number") {
-      this.state.queue = Math.max(0, next.queue)
-    }
-
-    if ("model" in next && typeof next.model === "string") {
-      this.state.model = next.model
-      this.modelText.content = next.model
-    }
-
-    if (this.state.phase === "idle") {
-      this.composer.focus()
-    }
-
-    this.refreshFooterRow()
+    this.setState((state) => ({
+      phase: next.phase ?? state.phase,
+      status: typeof next.status === "string" ? next.status : state.status,
+      queue: typeof next.queue === "number" ? Math.max(0, next.queue) : state.queue,
+      model: typeof next.model === "string" ? next.model : state.model,
+    }))
   }
 
   public append(kind: EntryKind, text: string): void {
-    if (this.destroyed || this.renderer.isDestroyed) return
-    if (text.trim().length === 0) return
+    if (this.destroyed || this.renderer.isDestroyed) {
+      return
+    }
+
+    if (!text.trim()) {
+      return
+    }
+
     this.renderer.writeToScrollback(entryWriter(kind, text, new Date()))
   }
 
@@ -492,22 +130,7 @@ export class RunFooter implements FooterApi {
 
     this.destroyed = true
     this.notifyClose()
-
-    if (this.leaderTimeout) {
-      clearTimeout(this.leaderTimeout)
-      this.leaderTimeout = undefined
-    }
-
-    this.composer.off("line-info-change", this.handleDraftChanged)
-    this.composer.onSubmit = undefined
-    this.composer.onKeyDown = undefined
-    this.renderer.off(CliRenderEvents.RESIZE, this.handleResize)
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
-
-    if (!this.renderer.isDestroyed) {
-      this.renderer.root.remove(this.shell.id)
-    }
-
     this.prompts.clear()
     this.closes.clear()
   }
@@ -523,90 +146,48 @@ export class RunFooter implements FooterApi {
     }
   }
 
-  private refreshFooterRow(): void {
+  private setStatus = (status: string): void => {
+    this.patch({ status })
+  }
+
+  private syncRows = (value: number): void => {
     if (this.destroyed || this.renderer.isDestroyed) {
       return
     }
 
-    const width = this.renderer.width
-    const busy = this.state.phase === "running"
-    const base = this.state.status || `${this.agentLabel} · ${this.state.model}`
-    const queued = this.state.queue > 0 ? ` · ${this.state.queue} queued` : ""
-    const statusText = `${base}${queued}`
-
-    this.topStatusRow.visible = true
-    this.topStatusSpinner.visible = busy
-    this.topStatusText.content = statusText
-    this.topStatusText.fg = busy ? HIGHLIGHT_COLOR : MUTED_COLOR
-
-    if (busy) {
-      this.hintSendText.visible = false
-      this.hintNewlineText.visible = false
-      this.hintHistoryText.visible = false
-      this.hintVariantText.visible = false
-      this.hintExitText.visible = true
-      this.hintExitText.content = "/exit quit"
-      this.hintExitText.fg = TEXT_COLOR
+    const rows = Math.max(TEXTAREA_MIN_ROWS, Math.min(TEXTAREA_MAX_ROWS, value))
+    if (rows === this.rows) {
       return
     }
 
-    this.hintSendText.visible = width >= HINT_WIDTH_BREAKPOINTS.send
-    this.hintNewlineText.visible = width >= HINT_WIDTH_BREAKPOINTS.newline
-    this.hintHistoryText.visible = width >= HINT_WIDTH_BREAKPOINTS.history
-    this.hintVariantText.visible = this.variantHint.length > 0 && width >= HINT_WIDTH_BREAKPOINTS.variant
-    this.hintExitText.visible = true
-    this.hintExitText.content = "/exit"
-    this.hintExitText.fg = MUTED_COLOR
-  }
+    this.rows = rows
+    const min = this.base + TEXTAREA_MIN_ROWS
+    const max = this.base + TEXTAREA_MAX_ROWS
+    const height = Math.max(min, Math.min(max, this.base + rows))
 
-  private syncFooterHeightFromComposer(): void {
-    if (this.destroyed || this.renderer.isDestroyed || this.composer.isDestroyed) {
-      return
-    }
-
-    const nextRows = Math.max(TEXTAREA_MIN_HEIGHT, Math.min(TEXTAREA_MAX_HEIGHT, this.composer.virtualLineCount || 1))
-    if (nextRows === this.composerRows) {
-      return
-    }
-
-    const delta = nextRows - this.composerRows
-    this.composerRows = nextRows
-
-    const minHeight = this.footerBaseRows + TEXTAREA_MIN_HEIGHT
-    const maxHeight = this.footerBaseRows + TEXTAREA_MAX_HEIGHT
-    const nextHeight = Math.max(minHeight, Math.min(maxHeight, this.renderer.footerHeight + delta))
-
-    if (nextHeight !== this.renderer.footerHeight) {
-      this.renderer.footerHeight = nextHeight
+    if (height !== this.renderer.footerHeight) {
+      this.renderer.footerHeight = height
     }
   }
 
-  private matches(bindings: Keybind.Info[], event: Keybind.Info): boolean {
-    for (const binding of bindings) {
-      if (Keybind.match(binding, event)) {
-        return true
-      }
+  private handlePrompt = (text: string): boolean => {
+    if (this.isClosed) {
+      return false
     }
-    return false
-  }
 
-  private clearLeader(): void {
-    this.leaderActive = false
-    if (this.leaderTimeout) {
-      clearTimeout(this.leaderTimeout)
-      this.leaderTimeout = undefined
+    if (this.prompts.size === 0) {
+      this.patch({ status: "input queue unavailable" })
+      return false
     }
+
+    for (const fn of [...this.prompts]) {
+      fn(text)
+    }
+
+    return true
   }
 
-  private armLeader(): void {
-    this.clearLeader()
-    this.leaderActive = true
-    this.leaderTimeout = setTimeout(() => {
-      this.clearLeader()
-    }, LEADER_TIMEOUT_MS)
-  }
-
-  private runVariantCycle(): void {
+  private handleCycle = (): void => {
     const result = this.options.onCycleVariant?.()
     if (!result) {
       this.patch({ status: "no variants available" })
@@ -624,172 +205,7 @@ export class RunFooter implements FooterApi {
     this.patch(patch)
   }
 
-  private handleVariantCycleKey = (event: KeyEvent): boolean => {
-    const plain = toKeyInfo(event, false)
-
-    if (!this.leaderActive && this.matches(this.leaderBindings, plain)) {
-      this.armLeader()
-      event.preventDefault()
-      return true
-    }
-
-    if (this.leaderActive) {
-      const withLeader = toKeyInfo(event, true)
-      const matched = this.matches(this.variantCycleBindings, withLeader)
-      this.clearLeader()
-      event.preventDefault()
-
-      if (matched) {
-        this.runVariantCycle()
-      }
-
-      return true
-    }
-
-    if (this.matches(this.variantCycleBindings, plain)) {
-      this.runVariantCycle()
-      event.preventDefault()
-      return true
-    }
-
-    return false
-  }
-
-  private pushHistory(input: string): void {
-    if (!input) {
-      return
-    }
-
-    if (this.history.items[this.history.items.length - 1] === input) {
-      this.history.index = null
-      this.history.draft = ""
-      return
-    }
-
-    this.history.items.push(input)
-    if (this.history.items.length > 200) {
-      this.history.items.shift()
-    }
-    this.history.index = null
-    this.history.draft = ""
-  }
-
-  private moveHistory(direction: -1 | 1, event: KeyEvent): void {
-    if (this.history.items.length === 0) {
-      return
-    }
-
-    if (direction === -1 && this.composer.cursorOffset !== 0) {
-      return
-    }
-
-    if (direction === 1 && this.composer.cursorOffset !== this.composer.plainText.length) {
-      return
-    }
-
-    if (this.history.index === null) {
-      if (direction === 1) {
-        return
-      }
-
-      this.history.draft = this.composer.plainText
-      this.history.index = this.history.items.length - 1
-    } else {
-      const nextIndex = this.history.index + direction
-      if (nextIndex < 0) {
-        return
-      }
-
-      if (nextIndex >= this.history.items.length) {
-        this.history.index = null
-        this.composer.setText(this.history.draft)
-        this.composer.cursorOffset = this.composer.plainText.length
-        event.preventDefault()
-        this.refreshFooterRow()
-        return
-      }
-
-      this.history.index = nextIndex
-    }
-
-    const next = this.history.items[this.history.index]
-    this.composer.setText(next)
-    this.composer.cursorOffset = direction === -1 ? 0 : this.composer.plainText.length
-    event.preventDefault()
-    this.refreshFooterRow()
-  }
-
-  private handleComposerKeyDown = (event: KeyEvent): void => {
-    if (this.destroyed || this.renderer.isDestroyed) {
-      return
-    }
-
-    if (this.handleVariantCycleKey(event)) {
-      return
-    }
-
-    if (event.ctrl || event.meta || event.shift || event.super || event.hyper) {
-      return
-    }
-
-    if (event.name === "up") {
-      this.moveHistory(-1, event)
-      return
-    }
-
-    if (event.name === "down") {
-      this.moveHistory(1, event)
-    }
-  }
-
-  private handleSubmit = (): void => {
-    if (this.destroyed || this.renderer.isDestroyed) return
-
-    const input = this.composer.plainText.trim()
-
-    if (!input) {
-      this.patch({
-        status: this.state.phase === "running" ? "waiting for current response" : "empty prompt ignored",
-      })
-      return
-    }
-
-    if (isExitCommand(input)) {
-      this.close()
-      return
-    }
-
-    if (this.prompts.size === 0) {
-      this.patch({ status: "input queue unavailable" })
-      return
-    }
-
-    this.pushHistory(input)
-    this.composer.setText("")
-    this.syncFooterHeightFromComposer()
-    this.composer.focus()
-
-    for (const fn of [...this.prompts]) {
-      fn(input)
-    }
-  }
-
-  private handleDraftChanged = (): void => {
-    this.syncFooterHeightFromComposer()
-    this.refreshFooterRow()
-  }
-
-  private handleResize = (): void => {
-    this.syncFooterHeightFromComposer()
-    this.refreshFooterRow()
-  }
-
   private handleDestroy = (): void => {
     this.notifyClose()
-
-    if (this.leaderTimeout) {
-      clearTimeout(this.leaderTimeout)
-      this.leaderTimeout = undefined
-    }
   }
 }

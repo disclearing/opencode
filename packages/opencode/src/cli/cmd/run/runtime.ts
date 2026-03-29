@@ -1,8 +1,8 @@
 import { createCliRenderer } from "@opentui/core"
 import { TuiConfig } from "../../../config/tui"
-import { RunFooter, type FooterKeybinds } from "./footer"
+import { RunFooter } from "./footer"
 import { formatUnknownError, runPromptTurn } from "./stream"
-import type { FooterApi, RunInput } from "./types"
+import type { FooterApi, FooterKeybinds, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 7
 
