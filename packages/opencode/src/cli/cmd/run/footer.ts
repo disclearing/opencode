@@ -9,7 +9,7 @@ import {
 } from "@opentui/core"
 import { Keybind } from "../../../util/keybind"
 import { entryWriter } from "./scrollback"
-import type { EntryKind } from "./types"
+import type { EntryKind, FooterApi, FooterPatch, FooterState } from "./types"
 
 const HIGHLIGHT_COLOR = "#38bdf8"
 const MUTED_COLOR = "#64748b"
@@ -117,7 +117,7 @@ type RunFooterOptions = {
   onCycleVariant?: () => VariantCycleResult | void
 }
 
-export class RunFooter {
+export class RunFooter implements FooterApi {
   private shell: BoxRenderable
   private composerFrame: BoxRenderable
   private composerArea: BoxRenderable
@@ -138,13 +138,12 @@ export class RunFooter {
   private hintHistoryText: TextRenderable
   private hintVariantText: TextRenderable
   private hintExitText: TextRenderable
-  private pendingInput: ((value: string | null) => void) | null = null
   private closed = false
-  private busy = false
   private destroyed = false
-  private statusMessage = ""
   private readonly agentLabel: string
-  private defaultStatus = ""
+  private state: FooterState
+  private prompts = new Set<(text: string) => void>()
+  private closes = new Set<() => void>()
   private history: FooterHistoryState = {
     items: [],
     index: null,
@@ -167,6 +166,12 @@ export class RunFooter {
     this.leaderBindings = Keybind.parse(options.keybinds.leader)
     this.variantCycleBindings = Keybind.parse(options.keybinds.variantCycle)
     this.variantHint = printableBinding(options.keybinds.variantCycle, options.keybinds.leader)
+    this.state = {
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: options.modelLabel,
+    }
 
     this.shell = new BoxRenderable(renderer, {
       id: "run-direct-footer-shell",
@@ -278,15 +283,13 @@ export class RunFooter {
 
     this.modelText = new TextRenderable(renderer, {
       id: "run-direct-footer-model",
-      content: options.modelLabel,
+      content: this.state.model,
       fg: MUTED_COLOR,
       wrapMode: "none",
       truncate: true,
       flexGrow: 1,
       flexShrink: 1,
     })
-
-    this.defaultStatus = `${this.agentLabel} · ${options.modelLabel}`
 
     this.separatorRow = new BoxRenderable(renderer, {
       id: "run-direct-footer-separator-row",
@@ -416,26 +419,52 @@ export class RunFooter {
     return this.closed || this.destroyed || this.renderer.isDestroyed
   }
 
-  public setModelLabel(label: string): void {
-    this.modelText.content = label
-    this.defaultStatus = `${this.agentLabel} · ${label}`
+  public onPrompt(fn: (text: string) => void): () => void {
+    this.prompts.add(fn)
+    return () => {
+      this.prompts.delete(fn)
+    }
+  }
+
+  public onClose(fn: () => void): () => void {
+    if (this.isClosed) {
+      fn()
+      return () => {}
+    }
+
+    this.closes.add(fn)
+    return () => {
+      this.closes.delete(fn)
+    }
+  }
+
+  public patch(next: FooterPatch): void {
+    if (this.destroyed || this.renderer.isDestroyed) {
+      return
+    }
+
+    if ("phase" in next && next.phase) {
+      this.state.phase = next.phase
+    }
+
+    if ("status" in next && typeof next.status === "string") {
+      this.state.status = next.status
+    }
+
+    if ("queue" in next && typeof next.queue === "number") {
+      this.state.queue = Math.max(0, next.queue)
+    }
+
+    if ("model" in next && typeof next.model === "string") {
+      this.state.model = next.model
+      this.modelText.content = next.model
+    }
+
+    if (this.state.phase === "idle") {
+      this.composer.focus()
+    }
+
     this.refreshFooterRow()
-  }
-
-  public setStatus(status: string): void {
-    this.statusMessage = status
-    this.refreshFooterRow()
-  }
-
-  public setBusy(status: string): void {
-    this.busy = true
-    this.setStatus(status)
-  }
-
-  public setIdle(status = ""): void {
-    this.busy = false
-    this.setStatus(status || this.defaultStatus)
-    this.composer.focus()
   }
 
   public append(kind: EntryKind, text: string): void {
@@ -444,25 +473,12 @@ export class RunFooter {
     this.renderer.writeToScrollback(entryWriter(kind, text, new Date()))
   }
 
-  public waitForInput(): Promise<string | null> {
-    if (this.isClosed) {
-      return Promise.resolve(null)
+  public close(): void {
+    if (this.closed) {
+      return
     }
 
-    this.setIdle("")
-    return new Promise((resolve) => {
-      this.pendingInput = resolve
-      this.composer.focus()
-    })
-  }
-
-  public close(): void {
-    if (this.closed) return
-    this.closed = true
-
-    const pending = this.pendingInput
-    this.pendingInput = null
-    pending?.(null)
+    this.notifyClose()
 
     if (!this.renderer.isDestroyed) {
       this.renderer.destroy()
@@ -470,18 +486,17 @@ export class RunFooter {
   }
 
   public destroy(): void {
-    if (this.destroyed) return
+    if (this.destroyed) {
+      return
+    }
+
     this.destroyed = true
-    this.closed = true
+    this.notifyClose()
 
     if (this.leaderTimeout) {
       clearTimeout(this.leaderTimeout)
       this.leaderTimeout = undefined
     }
-
-    const pending = this.pendingInput
-    this.pendingInput = null
-    pending?.(null)
 
     this.composer.off("line-info-change", this.handleDraftChanged)
     this.composer.onSubmit = undefined
@@ -492,6 +507,20 @@ export class RunFooter {
     if (!this.renderer.isDestroyed) {
       this.renderer.root.remove(this.shell.id)
     }
+
+    this.prompts.clear()
+    this.closes.clear()
+  }
+
+  private notifyClose(): void {
+    if (this.closed) {
+      return
+    }
+
+    this.closed = true
+    for (const fn of [...this.closes]) {
+      fn()
+    }
   }
 
   private refreshFooterRow(): void {
@@ -500,16 +529,17 @@ export class RunFooter {
     }
 
     const width = this.renderer.width
-    const statusText = this.busy
-      ? this.statusMessage || "assistant responding"
-      : this.statusMessage || this.defaultStatus
+    const busy = this.state.phase === "running"
+    const base = this.state.status || `${this.agentLabel} · ${this.state.model}`
+    const queued = this.state.queue > 0 ? ` · ${this.state.queue} queued` : ""
+    const statusText = `${base}${queued}`
 
     this.topStatusRow.visible = true
-    this.topStatusSpinner.visible = this.busy
+    this.topStatusSpinner.visible = busy
     this.topStatusText.content = statusText
-    this.topStatusText.fg = this.busy ? HIGHLIGHT_COLOR : MUTED_COLOR
+    this.topStatusText.fg = busy ? HIGHLIGHT_COLOR : MUTED_COLOR
 
-    if (this.busy) {
+    if (busy) {
       this.hintSendText.visible = false
       this.hintNewlineText.visible = false
       this.hintHistoryText.visible = false
@@ -579,15 +609,19 @@ export class RunFooter {
   private runVariantCycle(): void {
     const result = this.options.onCycleVariant?.()
     if (!result) {
-      this.setStatus("no variants available")
+      this.patch({ status: "no variants available" })
       return
     }
 
-    if (result.modelLabel) {
-      this.setModelLabel(result.modelLabel)
+    const patch: FooterPatch = {
+      status: result.status ?? "variant updated",
     }
 
-    this.setStatus(result.status ?? "variant updated")
+    if (result.modelLabel) {
+      patch.model = result.modelLabel
+    }
+
+    this.patch(patch)
   }
 
   private handleVariantCycleKey = (event: KeyEvent): boolean => {
@@ -714,7 +748,9 @@ export class RunFooter {
     const input = this.composer.plainText.trim()
 
     if (!input) {
-      this.setStatus(this.busy ? "waiting for current response" : "empty prompt ignored")
+      this.patch({
+        status: this.state.phase === "running" ? "waiting for current response" : "empty prompt ignored",
+      })
       return
     }
 
@@ -723,13 +759,8 @@ export class RunFooter {
       return
     }
 
-    if (this.busy) {
-      this.setStatus("waiting for current response")
-      return
-    }
-
-    if (!this.pendingInput) {
-      this.setStatus("input queue unavailable")
+    if (this.prompts.size === 0) {
+      this.patch({ status: "input queue unavailable" })
       return
     }
 
@@ -738,9 +769,9 @@ export class RunFooter {
     this.syncFooterHeightFromComposer()
     this.composer.focus()
 
-    const pending = this.pendingInput
-    this.pendingInput = null
-    pending(input)
+    for (const fn of [...this.prompts]) {
+      fn(input)
+    }
   }
 
   private handleDraftChanged = (): void => {
@@ -754,13 +785,11 @@ export class RunFooter {
   }
 
   private handleDestroy = (): void => {
-    this.closed = true
+    this.notifyClose()
+
     if (this.leaderTimeout) {
       clearTimeout(this.leaderTimeout)
       this.leaderTimeout = undefined
     }
-    const pending = this.pendingInput
-    this.pendingInput = null
-    pending?.(null)
   }
 }

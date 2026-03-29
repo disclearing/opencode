@@ -21,3 +21,24 @@ export type RunInput = {
 }
 
 export type EntryKind = "system" | "user" | "assistant" | "tool" | "error"
+
+export type FooterPhase = "idle" | "running"
+
+export type FooterState = {
+  phase: FooterPhase
+  status: string
+  queue: number
+  model: string
+}
+
+export type FooterPatch = Partial<FooterState>
+
+export type FooterApi = {
+  readonly isClosed: boolean
+  onPrompt(fn: (text: string) => void): () => void
+  onClose(fn: () => void): () => void
+  patch(next: FooterPatch): void
+  append(kind: EntryKind, text: string): void
+  close(): void
+  destroy(): void
+}

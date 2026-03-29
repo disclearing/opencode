@@ -1,12 +1,6 @@
 import path from "path"
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
-import type { RunFilePart, RunInput } from "./types"
-
-type RunView = {
-  readonly isClosed: boolean
-  append: (kind: "system" | "user" | "assistant" | "tool" | "error", text: string) => void
-  setBusy: (status: string) => void
-}
+import type { FooterApi, RunFilePart, RunInput } from "./types"
 
 type TurnInput = {
   sdk: OpencodeClient
@@ -18,7 +12,7 @@ type TurnInput = {
   files: RunFilePart[]
   includeFiles: boolean
   thinking: boolean
-  footer: RunView
+  footer: FooterApi
 }
 
 function normalizePath(input?: string): string {
@@ -161,7 +155,10 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
           !announcedAssistant
         ) {
           input.footer.append("system", `${event.properties.info.agent} · ${event.properties.info.modelID}`)
-          input.footer.setBusy("assistant responding")
+          input.footer.patch({
+            phase: "running",
+            status: "assistant responding",
+          })
           announcedAssistant = true
         }
 

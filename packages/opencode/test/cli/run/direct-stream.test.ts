@@ -15,7 +15,7 @@ function eventStream(events: unknown[]) {
 describe("run stream", () => {
   test("keeps event order and ignores other sessions", async () => {
     const appended: Array<{ kind: string; text: string }> = []
-    const busy: string[] = []
+    const patched: unknown[] = []
     const promptCalls: unknown[] = []
 
     const sdk = {
@@ -143,12 +143,20 @@ describe("run stream", () => {
       thinking: false,
       footer: {
         isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch(next) {
+          patched.push(next)
+        },
         append(kind, text) {
           appended.push({ kind, text })
         },
-        setBusy(status) {
-          busy.push(status)
-        },
+        close() {},
+        destroy() {},
       },
     })
 
@@ -156,7 +164,12 @@ describe("run stream", () => {
     expect((promptCalls[0] as { parts: unknown[] }).parts).toHaveLength(2)
     expect((promptCalls[0] as { parts: Array<{ type: string }> }).parts[0]?.type).toBe("file")
 
-    expect(busy).toEqual(["assistant responding"])
+    expect(patched).toEqual([
+      {
+        phase: "running",
+        status: "assistant responding",
+      },
+    ])
     expect(appended).toEqual([
       { kind: "system", text: "main-agent · main-model" },
       { kind: "assistant", text: "assistant reply" },
@@ -227,10 +240,18 @@ describe("run stream", () => {
       thinking: false,
       footer: {
         isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch() {},
         append(kind, text) {
           appended.push({ kind, text })
         },
-        setBusy() {},
+        close() {},
+        destroy() {},
       },
     })
 

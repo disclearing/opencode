@@ -2,7 +2,7 @@ import { createCliRenderer } from "@opentui/core"
 import { TuiConfig } from "../../../config/tui"
 import { RunFooter, type FooterKeybinds } from "./footer"
 import { formatUnknownError, runPromptTurn } from "./stream"
-import type { RunInput } from "./types"
+import type { FooterApi, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 7
 
@@ -98,6 +98,113 @@ function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): {
   }
 }
 
+type QueueInput = {
+  footer: FooterApi
+  initialInput?: string
+  run: (prompt: string) => Promise<void>
+}
+
+/** @internal Exported for testing */
+export async function runPromptQueue(input: QueueInput): Promise<void> {
+  const q: string[] = []
+  let run = false
+  let closed = input.footer.isClosed
+  let err: unknown
+  let hasErr = false
+  let done: (() => void) | undefined
+  const wait = new Promise<void>((resolve) => {
+    done = resolve
+  })
+
+  const fail = (error: unknown) => {
+    err = error
+    hasErr = true
+    done?.()
+    done = undefined
+  }
+
+  const finish = () => {
+    if (!closed || run) {
+      return
+    }
+
+    done?.()
+    done = undefined
+  }
+
+  const pump = async () => {
+    if (run || closed) {
+      return
+    }
+
+    run = true
+
+    try {
+      while (!closed && q.length > 0) {
+        const prompt = q.shift()
+        if (!prompt) {
+          continue
+        }
+
+        input.footer.patch({
+          phase: "running",
+          status: "sending prompt",
+          queue: q.length,
+        })
+        input.footer.append("user", prompt)
+        await input.run(prompt)
+      }
+    } finally {
+      run = false
+      input.footer.patch({
+        phase: "idle",
+        status: "",
+        queue: q.length,
+      })
+      finish()
+    }
+  }
+
+  const push = (text: string) => {
+    const prompt = text
+    if (!prompt.trim() || closed) {
+      return
+    }
+
+    q.push(prompt)
+    input.footer.patch({ queue: q.length })
+    void pump().catch(fail)
+  }
+
+  const offPrompt = input.footer.onPrompt((text) => {
+    push(text)
+  })
+  const offClose = input.footer.onClose(() => {
+    closed = true
+    finish()
+  })
+
+  try {
+    if (closed) {
+      return
+    }
+
+    push(input.initialInput ?? "")
+    await pump()
+
+    if (!closed) {
+      await wait
+    }
+
+    if (hasErr) {
+      throw err
+    }
+  } finally {
+    offPrompt()
+    offClose()
+  }
+}
+
 export async function runInteractiveMode(input: RunInput): Promise<void> {
   const [keybinds, variants] = await Promise.all([
     resolveFooterKeybinds(),
@@ -145,42 +252,30 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
 
   try {
     footer.append("system", "Interactive mode enabled. Type /exit or /quit to finish.")
-
     let includeFiles = true
-    let prompt: string | null | undefined = input.initialInput?.trim() ? input.initialInput : undefined
-
-    while (!footer.isClosed) {
-      if (!prompt) {
-        prompt = await footer.waitForInput()
-        if (!prompt) {
-          break
+    await runPromptQueue({
+      footer,
+      initialInput: input.initialInput,
+      run: async (prompt) => {
+        try {
+          await runPromptTurn({
+            sdk: input.sdk,
+            sessionID: input.sessionID,
+            agent: input.agent,
+            model: input.model,
+            variant: activeVariant,
+            prompt,
+            files: input.files,
+            includeFiles,
+            thinking: input.thinking,
+            footer,
+          })
+          includeFiles = false
+        } catch (error) {
+          footer.append("error", formatUnknownError(error))
         }
-      }
-
-      footer.append("user", prompt)
-      footer.setBusy("sending prompt")
-
-      try {
-        await runPromptTurn({
-          sdk: input.sdk,
-          sessionID: input.sessionID,
-          agent: input.agent,
-          model: input.model,
-          variant: activeVariant,
-          prompt,
-          files: input.files,
-          includeFiles,
-          thinking: input.thinking,
-          footer,
-        })
-        includeFiles = false
-      } catch (error) {
-        footer.append("error", formatUnknownError(error))
-      }
-
-      prompt = undefined
-      footer.setIdle("")
-    }
+      },
+    })
   } finally {
     footer.destroy()
     if (!renderer.isDestroyed) {
