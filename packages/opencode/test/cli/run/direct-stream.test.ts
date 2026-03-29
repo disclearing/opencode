@@ -164,12 +164,10 @@ describe("run stream", () => {
     expect((promptCalls[0] as { parts: unknown[] }).parts).toHaveLength(2)
     expect((promptCalls[0] as { parts: Array<{ type: string }> }).parts[0]?.type).toBe("file")
 
-    expect(patched).toEqual([
-      {
-        phase: "running",
-        status: "assistant responding",
-      },
-    ])
+    expect(patched).toContainEqual({
+      phase: "running",
+      status: "assistant responding",
+    })
     expect(appended).toEqual([
       { kind: "system", text: "main-agent · main-model" },
       { kind: "assistant", text: "assistant reply" },

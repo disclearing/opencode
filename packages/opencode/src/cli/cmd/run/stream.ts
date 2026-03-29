@@ -256,6 +256,13 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       parts: [...(input.includeFiles ? input.files : []), { type: "text", text: input.prompt }],
     })
 
+    if (!input.footer.isClosed && !announcedAssistant) {
+      input.footer.patch({
+        phase: "running",
+        status: "waiting for assistant",
+      })
+    }
+
     await watch
   } catch (error) {
     abort.abort()

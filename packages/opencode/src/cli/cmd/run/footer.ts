@@ -206,7 +206,15 @@ export class RunFooter implements FooterApi {
   }
 
   private handleDestroy = (): void => {
+    if (this.destroyed) {
+      return
+    }
+
+    this.destroyed = true
     this.notifyClose()
+    this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
+    this.prompts.clear()
+    this.closes.clear()
   }
 
   private scheduleSettleRender(): void {
@@ -215,14 +223,18 @@ export class RunFooter implements FooterApi {
     }
 
     this.settle = true
-    void this.renderer.idle().then(() => {
-      this.settle = false
+    void this.renderer
+      .idle()
+      .then(() => {
+        if (this.destroyed || this.renderer.isDestroyed || this.closed) {
+          return
+        }
 
-      if (this.destroyed || this.renderer.isDestroyed || this.closed) {
-        return
-      }
-
-      this.renderer.requestRender()
-    })
+        this.renderer.requestRender()
+      })
+      .catch(() => {})
+      .finally(() => {
+        this.settle = false
+      })
   }
 }

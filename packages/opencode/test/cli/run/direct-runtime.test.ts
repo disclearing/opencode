@@ -59,6 +59,12 @@ function createFooter() {
     footer,
     patched,
     appended,
+    listeners() {
+      return {
+        prompts: prompts.size,
+        closes: closes.size,
+      }
+    },
     submit(text: string) {
       for (const fn of [...prompts]) {
         fn(text)
@@ -69,6 +75,38 @@ function createFooter() {
 }
 
 describe("run runtime", () => {
+  test("returns immediately when footer is already closed", async () => {
+    const ui = createFooter()
+    let calls = 0
+    ui.close()
+
+    await runPromptQueue({
+      footer: ui.footer,
+      run: async () => {
+        calls += 1
+      },
+    })
+
+    expect(calls).toBe(0)
+    expect(ui.listeners()).toEqual({ prompts: 0, closes: 0 })
+  })
+
+  test("close resolves queue and unsubscribes listeners", async () => {
+    const ui = createFooter()
+
+    const queue = runPromptQueue({
+      footer: ui.footer,
+      run: async () => {},
+    })
+
+    expect(ui.listeners()).toEqual({ prompts: 1, closes: 1 })
+
+    ui.close()
+    await queue
+
+    expect(ui.listeners()).toEqual({ prompts: 0, closes: 0 })
+  })
+
   test("submit while running is queued", async () => {
     const ui = createFooter()
     const prompts: string[] = []
@@ -166,6 +204,11 @@ describe("run runtime", () => {
 
     expect(prompts).toEqual(["one"])
     expect(ui.appended).toEqual([{ kind: "user", text: "one" }])
+    expect(ui.patched).toContainEqual({
+      phase: "idle",
+      status: "",
+      queue: 0,
+    })
   })
 
   test("keeps initial input whitespace", async () => {

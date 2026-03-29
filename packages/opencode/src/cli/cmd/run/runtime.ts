@@ -199,6 +199,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   })
   const offClose = input.footer.onClose(() => {
     closed = true
+    q.length = 0
     finish()
   })
 
@@ -294,6 +295,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
       },
     })
   } finally {
+    footer.close()
     footer.destroy()
     shutdown(renderer)
   }
