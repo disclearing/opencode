@@ -166,6 +166,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   let area: Area | undefined
   let leader = false
   let timeout: NodeJS.Timeout | undefined
+  let rowsTick = false
 
   const clearLeader = () => {
     leader = false
@@ -190,6 +191,18 @@ export function RunFooterView(props: RunFooterViewProps) {
     }
 
     props.onRows(clampRows(area.virtualLineCount || 1))
+  }
+
+  const scheduleRows = () => {
+    if (rowsTick) {
+      return
+    }
+
+    rowsTick = true
+    queueMicrotask(() => {
+      rowsTick = false
+      syncRows()
+    })
   }
 
   const push = (text: string) => {
@@ -289,6 +302,12 @@ export function RunFooterView(props: RunFooterViewProps) {
   }
 
   const onKeyDown = (event: Key) => {
+    if (event.ctrl && event.name === "c") {
+      props.onExit()
+      event.preventDefault()
+      return
+    }
+
     if (handleCycle(event)) {
       return
     }
@@ -329,12 +348,8 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     push(text)
     area.setText("")
-    syncRows()
+    scheduleRows()
     area.focus()
-  }
-
-  const onLineInfoChange = () => {
-    syncRows()
   }
 
   onMount(() => {
@@ -342,23 +357,24 @@ export function RunFooterView(props: RunFooterViewProps) {
       return
     }
 
-    area.on("line-info-change", onLineInfoChange)
-    syncRows()
+    area.on("line-info-change", scheduleRows)
+    scheduleRows()
     area.focus()
   })
 
   onCleanup(() => {
     clearLeader()
+
     if (!area || area.isDestroyed) {
       return
     }
 
-    area.off("line-info-change", onLineInfoChange)
+    area.off("line-info-change", scheduleRows)
   })
 
   createEffect(() => {
     term().width
-    queueMicrotask(syncRows)
+    scheduleRows()
   })
 
   createEffect(() => {
@@ -443,7 +459,7 @@ export function RunFooterView(props: RunFooterViewProps) {
             keyBindings={bindings()}
             onSubmit={onSubmit}
             onKeyDown={onKeyDown}
-            onContentChange={syncRows}
+            onContentChange={scheduleRows}
             ref={(item) => {
               area = item as Area
             }}

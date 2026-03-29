@@ -1,4 +1,4 @@
-import { createCliRenderer } from "@opentui/core"
+import { createCliRenderer, type CliRenderer } from "@opentui/core"
 import { TuiConfig } from "../../../config/tui"
 import { RunFooter } from "./footer"
 import { formatUnknownError, runPromptTurn } from "./stream"
@@ -11,6 +11,24 @@ const DEFAULT_KEYBINDS: FooterKeybinds = {
   variantCycle: "ctrl+t,<leader>t",
   inputSubmit: "return",
   inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+}
+
+function shutdown(renderer: CliRenderer): void {
+  if (renderer.isDestroyed) {
+    return
+  }
+
+  if (renderer.externalOutputMode === "capture-stdout") {
+    renderer.externalOutputMode = "passthrough"
+  }
+
+  if (renderer.screenMode === "split-footer") {
+    renderer.screenMode = "main-screen"
+  }
+
+  if (!renderer.isDestroyed) {
+    renderer.destroy()
+  }
 }
 
 function formatModelLabel(model: NonNullable<RunInput["model"]>, variant: string | undefined): string {
@@ -218,15 +236,14 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     useMouse: false,
     autoFocus: false,
     openConsoleOnError: false,
-    exitOnCtrlC: true,
+    exitOnCtrlC: false,
     useKittyKeyboard: { events: process.platform === "win32" },
     screenMode: "split-footer",
     footerHeight: FOOTER_HEIGHT,
     externalOutputMode: "capture-stdout",
     consoleMode: "disabled",
+    clearOnShutdown: false,
   })
-
-  renderer.start()
 
   const footer = new RunFooter(renderer, {
     ...footerLabels({
@@ -278,8 +295,6 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     })
   } finally {
     footer.destroy()
-    if (!renderer.isDestroyed) {
-      renderer.destroy()
-    }
+    shutdown(renderer)
   }
 }

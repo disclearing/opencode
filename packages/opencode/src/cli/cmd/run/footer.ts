@@ -26,6 +26,7 @@ export class RunFooter implements FooterApi {
   private rows = TEXTAREA_MIN_ROWS
   private state: Accessor<FooterState>
   private setState: Setter<FooterState>
+  private settle = false
 
   constructor(
     private renderer: CliRenderer,
@@ -91,12 +92,14 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    this.setState((state) => ({
-      phase: next.phase ?? state.phase,
-      status: typeof next.status === "string" ? next.status : state.status,
-      queue: typeof next.queue === "number" ? Math.max(0, next.queue) : state.queue,
-      model: typeof next.model === "string" ? next.model : state.model,
-    }))
+    const prev = this.state()
+    const state = {
+      phase: next.phase ?? prev.phase,
+      status: typeof next.status === "string" ? next.status : prev.status,
+      queue: typeof next.queue === "number" ? Math.max(0, next.queue) : prev.queue,
+      model: typeof next.model === "string" ? next.model : prev.model,
+    }
+    this.setState(state)
   }
 
   public append(kind: EntryKind, text: string): void {
@@ -109,6 +112,7 @@ export class RunFooter implements FooterApi {
     }
 
     this.renderer.writeToScrollback(entryWriter(kind, text, new Date()))
+    this.scheduleSettleRender()
   }
 
   public close(): void {
@@ -117,10 +121,6 @@ export class RunFooter implements FooterApi {
     }
 
     this.notifyClose()
-
-    if (!this.renderer.isDestroyed) {
-      this.renderer.destroy()
-    }
   }
 
   public destroy(): void {
@@ -207,5 +207,22 @@ export class RunFooter implements FooterApi {
 
   private handleDestroy = (): void => {
     this.notifyClose()
+  }
+
+  private scheduleSettleRender(): void {
+    if (this.settle || this.destroyed || this.renderer.isDestroyed) {
+      return
+    }
+
+    this.settle = true
+    void this.renderer.idle().then(() => {
+      this.settle = false
+
+      if (this.destroyed || this.renderer.isDestroyed || this.closed) {
+        return
+      }
+
+      this.renderer.requestRender()
+    })
   }
 }
