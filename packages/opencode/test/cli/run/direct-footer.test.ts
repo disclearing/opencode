@@ -16,7 +16,7 @@ async function create() {
   let exits = 0
 
   const footer = new RunFooter(setup.renderer as any, {
-    agentLabel: "Agent default",
+    agentLabel: "Build",
     modelLabel: "Model default",
     first: false,
     theme: RUN_THEME_FALLBACK,

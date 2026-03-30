@@ -182,9 +182,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       minAlpha: 0.3,
     }),
   }))
-  const placeholder = createMemo(() =>
-    props.state().first ? 'Ask anything... "Fix a TODO in the codebase"' : "Ask anything...",
-  )
+  const placeholder = createMemo(() => (props.state().first ? 'Ask anything... "Fix a TODO in the codebase"' : ""))
 
   const history: History = {
     items: (props.history ?? [])
@@ -579,14 +577,25 @@ export function RunFooterView(props: RunFooterViewProps) {
           </box>
         </Show>
 
+        <Show when={!busy() && !exiting() && duration().length > 0}>
+          <box id="run-direct-footer-duration" flexDirection="row" gap={2} flexShrink={0} marginLeft={1}>
+            <text id="run-direct-footer-duration-mark" fg={theme().muted} wrapMode="none" truncate>
+              ▣
+            </text>
+            <box id="run-direct-footer-duration-tail" flexDirection="row" gap={1} flexShrink={0}>
+              <text id="run-direct-footer-duration-dot" fg={theme().muted} wrapMode="none" truncate>
+                ·
+              </text>
+              <text id="run-direct-footer-duration-value" fg={theme().muted} wrapMode="none" truncate>
+                {duration()}
+              </text>
+            </box>
+          </box>
+        </Show>
+
         <box id="run-direct-footer-spacer" flexGrow={1} flexShrink={1} backgroundColor="transparent" />
 
         <box id="run-direct-footer-hint-group" flexDirection="row" gap={2} flexShrink={0} justifyContent="flex-end">
-          <Show when={duration().length > 0}>
-            <text id="run-direct-footer-duration" fg={theme().muted} wrapMode="none" truncate>
-              {duration()}
-            </text>
-          </Show>
           <Show when={queue() > 0}>
             <text id="run-direct-footer-queue" fg={theme().muted} wrapMode="none" truncate>
               {queue()} queued

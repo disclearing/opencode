@@ -73,7 +73,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={(text) => {
             sent.push(text)
             return true
@@ -129,7 +129,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={(text) => {
             sent.push(text)
             return true
@@ -217,7 +217,7 @@ describe("run footer view", () => {
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
           history={["first", "second"]}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
@@ -321,7 +321,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
@@ -375,7 +375,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
@@ -398,10 +398,10 @@ describe("run footer view", () => {
     expect(lines[1]).toContain('Ask anything... "Fix a TODO in the codebase"')
     expect(lines[2]).toMatch(/^┃\s*$/)
     expect(lines[3]?.startsWith("┃")).toBe(true)
-    expect(lines[3]).toContain("Agent default")
+    expect(lines[3]).toContain("Build")
     expect(lines[4]).toMatch(/^╹▀+$/)
     expect(lines[5]).not.toContain("interrupt")
-    expect(lines[5]).toContain("1m 18s")
+    expect(lines[5]).toContain("▣  · 1m 18s")
     expect(lines[5]).toContain("167.8K (42%)")
     expect(lines[5]).toContain("ctrl+t variant")
   })
@@ -432,7 +432,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
@@ -449,7 +449,7 @@ describe("run footer view", () => {
 
     await setup.renderOnce()
     const frame = setup.captureCharFrame()
-    expect(frame).toContain("1m 18s")
+    expect(frame).toContain("▣  · 1m 18s")
     expect(frame).toContain("167.8K (42%)")
   })
 
@@ -479,7 +479,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
@@ -496,6 +496,70 @@ describe("run footer view", () => {
 
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("esc again to interrupt")
+  })
+
+  test("duration marker hides when interrupt or exit hints are active", async () => {
+    const [state, setState] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "1m 18s",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 120,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("▣  · 1m 18s")
+
+    setState((state) => ({
+      ...state,
+      phase: "running",
+    }))
+    await setup.renderOnce()
+    const running = setup.captureCharFrame()
+    expect(running).toContain("interrupt")
+    expect(running).not.toContain("▣  · 1m 18s")
+
+    setState((state) => ({
+      ...state,
+      phase: "idle",
+      exit: 1,
+    }))
+    await setup.renderOnce()
+    const exiting = setup.captureCharFrame()
+    expect(exiting).toContain("Press Ctrl-c again to exit")
+    expect(exiting).not.toContain("▣  · 1m 18s")
   })
 
   test("ctrl-c exit hint appears when armed", async () => {
@@ -524,7 +588,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
@@ -569,7 +633,7 @@ describe("run footer view", () => {
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
-          agent="Agent default"
+          agent="Build"
           onSubmit={() => true}
           onCycle={() => {}}
           onInterrupt={() => false}
