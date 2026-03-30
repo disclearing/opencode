@@ -33,6 +33,7 @@ export type FooterState = {
   usage: string
   first: boolean
   interrupt: number
+  exit: number
 }
 
 export type FooterPatch = Partial<FooterState>

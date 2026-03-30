@@ -71,10 +71,12 @@ type Key = {
 type RunFooterViewProps = {
   state: () => FooterState
   keybinds: FooterKeybinds
+  history?: string[]
   agent: string
   onSubmit: (text: string) => boolean
   onCycle: () => void
   onInterrupt: () => boolean
+  onExitRequest?: () => boolean
   onExit: () => void
   onRows: (rows: number) => void
   onStatus: (text: string) => void
@@ -163,6 +165,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   const hints = createMemo(() => hintFlags(term().width))
   const busy = createMemo(() => props.state().phase === "running")
   const armed = createMemo(() => props.state().interrupt > 0)
+  const exiting = createMemo(() => props.state().exit > 0)
   const queue = createMemo(() => props.state().queue)
   const duration = createMemo(() => props.state().duration)
   const usage = createMemo(() => props.state().usage)
@@ -186,7 +189,11 @@ export function RunFooterView(props: RunFooterViewProps) {
   )
 
   const history: History = {
-    items: [],
+    items: (props.history ?? [])
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+      .filter((item, index, all) => index === 0 || item !== all[index - 1])
+      .slice(-200),
     index: null,
     draft: "",
   }
@@ -331,8 +338,10 @@ export function RunFooterView(props: RunFooterViewProps) {
 
   const onKeyDown = (event: Key) => {
     if (event.ctrl && event.name === "c") {
-      props.onExit()
-      event.preventDefault()
+      const handled = props.onExitRequest ? props.onExitRequest() : (props.onExit(), true)
+      if (handled) {
+        event.preventDefault()
+      }
       return
     }
 
@@ -369,7 +378,11 @@ export function RunFooterView(props: RunFooterViewProps) {
       area.cursorOffset = 0
     }
 
-    if (dir === 1 && area.visualCursor.visualRow === area.virtualLineCount - 1) {
+    const last =
+      "height" in area && typeof area.height === "number" && Number.isFinite(area.height) && area.height > 0
+        ? area.height - 1
+        : Math.max(0, area.virtualLineCount - 1)
+    if (dir === 1 && area.visualCursor.visualRow === last) {
       area.cursorOffset = area.plainText.length
     }
   }
@@ -540,23 +553,31 @@ export function RunFooterView(props: RunFooterViewProps) {
         gap={1}
         flexShrink={0}
       >
-        <Show when={busy()}>
+        <Show when={busy() || exiting()}>
           <box id="run-direct-footer-hint-left" flexDirection="row" gap={1} flexShrink={0}>
-            <box id="run-direct-footer-status-spinner" marginLeft={1} flexShrink={0}>
-              <spinner color={spin().color} frames={spin().frames} interval={40} />
-            </box>
+            <Show when={exiting()}>
+              <text id="run-direct-footer-hint-exit" fg={HIGHLIGHT_COLOR} wrapMode="none" truncate marginLeft={1}>
+                Press Ctrl-c again to exit
+              </text>
+            </Show>
 
-            <text
-              id="run-direct-footer-hint-interrupt"
-              fg={armed() ? HIGHLIGHT_COLOR : TEXT_COLOR}
-              wrapMode="none"
-              truncate
-            >
-              {interruptKey()}{" "}
-              <span style={{ fg: armed() ? HIGHLIGHT_COLOR : MUTED_COLOR }}>
-                {armed() ? "again to interrupt" : "interrupt"}
-              </span>
-            </text>
+            <Show when={busy() && !exiting()}>
+              <box id="run-direct-footer-status-spinner" marginLeft={1} flexShrink={0}>
+                <spinner color={spin().color} frames={spin().frames} interval={40} />
+              </box>
+
+              <text
+                id="run-direct-footer-hint-interrupt"
+                fg={armed() ? HIGHLIGHT_COLOR : TEXT_COLOR}
+                wrapMode="none"
+                truncate
+              >
+                {interruptKey()}{" "}
+                <span style={{ fg: armed() ? HIGHLIGHT_COLOR : MUTED_COLOR }}>
+                  {armed() ? "again to interrupt" : "interrupt"}
+                </span>
+              </text>
+            </Show>
           </box>
         </Show>
 

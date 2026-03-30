@@ -15,6 +15,7 @@ type RunFooterOptions = {
   agentLabel: string
   modelLabel: string
   first: boolean
+  history?: string[]
   keybinds: FooterKeybinds
   onCycleVariant?: () => CycleResult | void
   onInterrupt?: () => void
@@ -31,6 +32,7 @@ export class RunFooter implements FooterApi {
   private setState: Setter<FooterState>
   private settle = false
   private interruptTimeout: NodeJS.Timeout | undefined
+  private exitTimeout: NodeJS.Timeout | undefined
   private interruptHint: string
 
   constructor(
@@ -46,6 +48,7 @@ export class RunFooter implements FooterApi {
       usage: "",
       first: options.first,
       interrupt: 0,
+      exit: 0,
     })
     this.state = state
     this.setState = setState
@@ -59,10 +62,12 @@ export class RunFooter implements FooterApi {
         createComponent(RunFooterView, {
           state: this.state,
           keybinds: options.keybinds,
+          history: options.history,
           agent: options.agentLabel,
           onSubmit: this.handlePrompt,
           onCycle: this.handleCycle,
           onInterrupt: this.handleInterrupt,
+          onExitRequest: this.handleExit,
           onExit: () => this.close(),
           onRows: this.syncRows,
           onStatus: this.setStatus,
@@ -116,6 +121,8 @@ export class RunFooter implements FooterApi {
         typeof next.interrupt === "number" && Number.isFinite(next.interrupt)
           ? Math.max(0, Math.floor(next.interrupt))
           : prev.interrupt,
+      exit:
+        typeof next.exit === "number" && Number.isFinite(next.exit) ? Math.max(0, Math.floor(next.exit)) : prev.exit,
     }
 
     if (state.phase === "idle") {
@@ -154,6 +161,7 @@ export class RunFooter implements FooterApi {
     this.destroyed = true
     this.notifyClose()
     this.clearInterruptTimer()
+    this.clearExitTimer()
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
@@ -254,6 +262,27 @@ export class RunFooter implements FooterApi {
     }, 5000)
   }
 
+  private clearExitTimer(): void {
+    if (!this.exitTimeout) {
+      return
+    }
+
+    clearTimeout(this.exitTimeout)
+    this.exitTimeout = undefined
+  }
+
+  private armExitTimer(): void {
+    this.clearExitTimer()
+    this.exitTimeout = setTimeout(() => {
+      this.exitTimeout = undefined
+      if (this.destroyed || this.renderer.isDestroyed || this.isClosed) {
+        return
+      }
+
+      this.patch({ exit: 0 })
+    }, 5000)
+  }
+
   private handleInterrupt = (): boolean => {
     if (this.isClosed || this.state().phase !== "running") {
       return false
@@ -271,6 +300,27 @@ export class RunFooter implements FooterApi {
     this.clearInterruptTimer()
     this.patch({ interrupt: 0, status: "interrupting" })
     this.options.onInterrupt?.()
+    return true
+  }
+
+  private handleExit = (): boolean => {
+    if (this.isClosed) {
+      return true
+    }
+
+    this.clearInterruptTimer()
+    const next = this.state().exit + 1
+    this.patch({ exit: next, interrupt: 0 })
+
+    if (next < 2) {
+      this.armExitTimer()
+      this.patch({ status: "Press Ctrl-c again to exit" })
+      return true
+    }
+
+    this.clearExitTimer()
+    this.patch({ exit: 0, status: "exiting" })
+    this.close()
     return true
   }
 
@@ -299,6 +349,7 @@ export class RunFooter implements FooterApi {
     this.destroyed = true
     this.notifyClose()
     this.clearInterruptTimer()
+    this.clearExitTimer()
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()

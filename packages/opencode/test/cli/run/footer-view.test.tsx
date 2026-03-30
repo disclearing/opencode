@@ -57,6 +57,7 @@ describe("run footer view", () => {
       usage: "",
       first: true,
       interrupt: 0,
+      exit: 0,
     })
 
     setup = await testRender(
@@ -112,6 +113,7 @@ describe("run footer view", () => {
       usage: "",
       first: true,
       interrupt: 0,
+      exit: 0,
     })
 
     setup = await testRender(
@@ -188,6 +190,74 @@ describe("run footer view", () => {
     expect(sent).toEqual(["one", "two"])
   })
 
+  test("history includes prior session prompts", async () => {
+    const [state, setState] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          history={["first", "second"]}
+          agent="Agent default"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={(text) => {
+            setState((state) => ({
+              ...state,
+              status: text,
+            }))
+          }}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    const area = composer(setup)
+
+    setup.mockInput.pressArrow("up")
+    expect(area.plainText).toBe("second")
+
+    setup.mockInput.pressArrow("up")
+    expect(area.plainText).toBe("first")
+
+    setup.mockInput.pressArrow("down")
+    expect(area.plainText).toBe("first")
+    expect(area.cursorOffset).toBe(area.plainText.length)
+
+    setup.mockInput.pressArrow("down")
+    expect(area.plainText).toBe("second")
+    expect(area.cursorOffset).toBe(area.plainText.length)
+
+    setup.mockInput.pressArrow("down")
+    expect(area.plainText).toBe("")
+    expect(area.cursorOffset).toBe(0)
+  })
+
   test("hint visibility matches width breakpoints", () => {
     expect(hintFlags(49)).toEqual({
       send: false,
@@ -235,6 +305,7 @@ describe("run footer view", () => {
       usage: "",
       first: true,
       interrupt: 0,
+      exit: 0,
     })
 
     setup = await testRender(
@@ -288,6 +359,7 @@ describe("run footer view", () => {
       usage: "167.8K (42%)",
       first: true,
       interrupt: 0,
+      exit: 0,
     })
 
     setup = await testRender(
@@ -344,6 +416,7 @@ describe("run footer view", () => {
       usage: "167.8K (42%)",
       first: false,
       interrupt: 0,
+      exit: 0,
     })
 
     setup = await testRender(
@@ -390,6 +463,7 @@ describe("run footer view", () => {
       usage: "",
       first: false,
       interrupt: 1,
+      exit: 0,
     })
 
     setup = await testRender(
@@ -424,6 +498,51 @@ describe("run footer view", () => {
     expect(setup.captureCharFrame()).toContain("esc again to interrupt")
   })
 
+  test("ctrl-c exit hint appears when armed", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 1,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Agent default"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 120,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Press Ctrl-c again to exit")
+  })
+
   test("queued indicator appears when queue is nonzero", async () => {
     const [state, setState] = createSignal<FooterState>({
       phase: "idle",
@@ -434,6 +553,7 @@ describe("run footer view", () => {
       usage: "",
       first: true,
       interrupt: 0,
+      exit: 0,
     })
 
     setup = await testRender(

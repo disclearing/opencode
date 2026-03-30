@@ -211,6 +211,39 @@ describe("run runtime", () => {
     })
   })
 
+  test("close aborts active run signal", async () => {
+    const ui = createFooter()
+    let hit = false
+
+    const queue = runPromptQueue({
+      footer: ui.footer,
+      run: async (_, signal) => {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            hit = true
+            resolve()
+            return
+          }
+
+          signal.addEventListener(
+            "abort",
+            () => {
+              hit = true
+              resolve()
+            },
+            { once: true },
+          )
+        })
+      },
+    })
+
+    ui.submit("one")
+    ui.close()
+    await queue
+
+    expect(hit).toBe(true)
+  })
+
   test("keeps initial input whitespace", async () => {
     const ui = createFooter()
     const prompts: string[] = []

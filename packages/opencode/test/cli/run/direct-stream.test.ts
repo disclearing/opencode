@@ -16,7 +16,7 @@ describe("run stream", () => {
   test("keeps event order and ignores other sessions", async () => {
     const appended: Array<{ kind: string; text: string }> = []
     const patched: unknown[] = []
-    const promptCalls: unknown[] = []
+    const promptCalls: Array<{ payload: unknown; options: unknown }> = []
 
     const sdk = {
       event: {
@@ -126,8 +126,8 @@ describe("run stream", () => {
           ]),
       },
       session: {
-        prompt: async (payload: unknown) => {
-          promptCalls.push(payload)
+        prompt: async (payload: unknown, options: unknown) => {
+          promptCalls.push({ payload, options })
         },
       },
       permission: {
@@ -175,8 +175,9 @@ describe("run stream", () => {
     })
 
     expect(promptCalls).toHaveLength(1)
-    expect((promptCalls[0] as { parts: unknown[] }).parts).toHaveLength(2)
-    expect((promptCalls[0] as { parts: Array<{ type: string }> }).parts[0]?.type).toBe("file")
+    expect((promptCalls[0]?.payload as { parts: unknown[] }).parts).toHaveLength(2)
+    expect((promptCalls[0]?.payload as { parts: Array<{ type: string }> }).parts[0]?.type).toBe("file")
+    expect((promptCalls[0]?.options as { signal?: AbortSignal }).signal).toBeInstanceOf(AbortSignal)
 
     expect(patched).toContainEqual({
       phase: "running",
@@ -288,5 +289,137 @@ describe("run stream", () => {
         text: "permission denied",
       },
     ])
+  })
+
+  test("returns immediately when close signal is already aborted", async () => {
+    let subscribed = 0
+    let prompted = 0
+
+    const sdk = {
+      event: {
+        subscribe: async () => {
+          subscribed += 1
+          return eventStream([])
+        },
+      },
+      session: {
+        prompt: async () => {
+          prompted += 1
+        },
+      },
+      permission: {
+        reply: async () => {},
+      },
+    } as unknown as OpencodeClient
+
+    const ctrl = new AbortController()
+    ctrl.abort()
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hello",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      signal: ctrl.signal,
+      footer: {
+        isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch() {},
+        append() {},
+        close() {},
+        destroy() {},
+      },
+    })
+
+    expect(subscribed).toBe(0)
+    expect(prompted).toBe(0)
+  })
+
+  test("aborts in-flight prompt when close signal fires", async () => {
+    let aborted = false
+
+    const sdk = {
+      event: {
+        subscribe: async (_: unknown, options?: { signal?: AbortSignal }) => ({
+          stream: (async function* () {
+            await new Promise<void>((resolve) => {
+              if (options?.signal?.aborted) {
+                resolve()
+                return
+              }
+
+              options?.signal?.addEventListener("abort", () => resolve(), { once: true })
+            })
+          })(),
+        }),
+      },
+      session: {
+        prompt: async (_: unknown, options?: { signal?: AbortSignal }) => {
+          await new Promise<void>((resolve) => {
+            if (options?.signal?.aborted) {
+              aborted = true
+              resolve()
+              return
+            }
+
+            options?.signal?.addEventListener(
+              "abort",
+              () => {
+                aborted = true
+                resolve()
+              },
+              { once: true },
+            )
+          })
+        },
+      },
+      permission: {
+        reply: async () => {},
+      },
+    } as unknown as OpencodeClient
+
+    const ctrl = new AbortController()
+    const run = runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hello",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      signal: ctrl.signal,
+      footer: {
+        isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch() {},
+        append() {},
+        close() {},
+        destroy() {},
+      },
+    })
+
+    ctrl.abort()
+    await run
+
+    expect(aborted).toBe(true)
   })
 })

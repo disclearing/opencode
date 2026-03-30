@@ -20,6 +20,7 @@ type TurnInput = {
   thinking: boolean
   limits: Record<string, number>
   footer: FooterApi
+  signal?: AbortSignal
 }
 
 function normalizePath(input?: string): string {
@@ -177,10 +178,26 @@ function formatUsage(
 }
 
 export async function runPromptTurn(input: TurnInput): Promise<void> {
+  if (input.signal?.aborted) {
+    return
+  }
+
   const abort = new AbortController()
-  const events = await input.sdk.event.subscribe(undefined, {
-    signal: abort.signal,
-  })
+  const stop = () => {
+    abort.abort()
+  }
+
+  input.signal?.addEventListener("abort", stop, { once: true })
+
+  let events: Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>>
+  try {
+    events = await input.sdk.event.subscribe(undefined, {
+      signal: abort.signal,
+    })
+  } catch (error) {
+    input.signal?.removeEventListener("abort", stop)
+    throw error
+  }
   const seen = new Set<string>()
   const runningTasks = new Set<string>()
   let announcedAssistant = false
@@ -316,13 +333,22 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
   })()
 
   try {
-    await input.sdk.session.prompt({
-      sessionID: input.sessionID,
-      agent: input.agent,
-      model: input.model,
-      variant: input.variant,
-      parts: [...(input.includeFiles ? input.files : []), { type: "text", text: input.prompt }],
-    })
+    await input.sdk.session.prompt(
+      {
+        sessionID: input.sessionID,
+        agent: input.agent,
+        model: input.model,
+        variant: input.variant,
+        parts: [...(input.includeFiles ? input.files : []), { type: "text", text: input.prompt }],
+      },
+      {
+        signal: abort.signal,
+      },
+    )
+
+    if (abort.signal.aborted) {
+      return
+    }
 
     if (!input.footer.isClosed && !announcedAssistant) {
       input.footer.patch({
@@ -333,10 +359,15 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
 
     await watch
   } catch (error) {
+    const canceled = abort.signal.aborted || input.signal?.aborted === true
     abort.abort()
     await watch.catch(() => {})
+    if (canceled) {
+      return
+    }
     throw error
   } finally {
+    input.signal?.removeEventListener("abort", stop)
     abort.abort()
   }
 }

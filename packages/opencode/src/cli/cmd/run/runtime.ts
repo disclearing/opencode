@@ -6,6 +6,7 @@ import { formatUnknownError, runPromptTurn } from "./stream"
 import type { FooterApi, FooterKeybinds, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 6
+const HISTORY_LIMIT = 200
 
 const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
@@ -114,6 +115,39 @@ async function resolveFirstPrompt(sdk: RunInput["sdk"], sessionID: string): Prom
   }
 }
 
+async function resolvePromptHistory(sdk: RunInput["sdk"], sessionID: string): Promise<string[]> {
+  try {
+    const response = await sdk.session.messages({
+      sessionID,
+      limit: HISTORY_LIMIT,
+    })
+    const messages = response.data ?? []
+    const history: string[] = []
+
+    for (const message of messages) {
+      if (message.info.role !== "user") {
+        continue
+      }
+
+      const text = message.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.text.trim())
+        .filter((part) => part.length > 0)
+        .join("\n")
+
+      if (!text || history[history.length - 1] === text) {
+        continue
+      }
+
+      history.push(text)
+    }
+
+    return history.slice(-HISTORY_LIMIT)
+  } catch {
+    return []
+  }
+}
+
 async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
   try {
     const config = await TuiConfig.get()
@@ -170,7 +204,7 @@ function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): {
 type QueueInput = {
   footer: FooterApi
   initialInput?: string
-  run: (prompt: string) => Promise<void>
+  run: (prompt: string, signal: AbortSignal) => Promise<void>
 }
 
 /** @internal Exported for testing */
@@ -178,6 +212,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   const q: string[] = []
   let run = false
   let closed = input.footer.isClosed
+  let ctrl: AbortController | undefined
   let err: unknown
   let hasErr = false
   let done: (() => void) | undefined
@@ -222,9 +257,14 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         })
         input.footer.append("user", prompt)
         const start = Date.now()
+        const next = new AbortController()
+        ctrl = next
         try {
-          await input.run(prompt)
+          await input.run(prompt, next.signal)
         } finally {
+          if (ctrl === next) {
+            ctrl = undefined
+          }
           input.footer.patch({
             duration: Locale.duration(Math.max(0, Date.now() - start)),
           })
@@ -259,6 +299,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   const offClose = input.footer.onClose(() => {
     closed = true
     q.length = 0
+    ctrl?.abort()
     finish()
   })
 
@@ -284,10 +325,11 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
 }
 
 export async function runInteractiveMode(input: RunInput): Promise<void> {
-  const [keybinds, info, first] = await Promise.all([
+  const [keybinds, info, first, history] = await Promise.all([
     resolveFooterKeybinds(),
     resolveModelInfo(input.sdk, input.model),
     resolveFirstPrompt(input.sdk, input.sessionID),
+    resolvePromptHistory(input.sdk, input.sessionID),
   ])
   const variants = info.variants
   let activeVariant = input.variant
@@ -315,6 +357,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
       variant: activeVariant,
     }),
     first,
+    history,
     keybinds,
     onCycleVariant: () => {
       if (!input.model || variants.length === 0) {
@@ -352,7 +395,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     await runPromptQueue({
       footer,
       initialInput: input.initialInput,
-      run: async (prompt) => {
+      run: async (prompt, signal) => {
         try {
           await runPromptTurn({
             sdk: input.sdk,
@@ -366,9 +409,13 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
             thinking: input.thinking,
             limits: info.limits,
             footer,
+            signal,
           })
           includeFiles = false
         } catch (error) {
+          if (signal.aborted || footer.isClosed) {
+            return
+          }
           footer.append("error", formatUnknownError(error))
         }
       },
