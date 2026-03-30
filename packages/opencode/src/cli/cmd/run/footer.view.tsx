@@ -6,11 +6,7 @@ import "opentui-spinner/solid"
 import { Keybind } from "../../../util/keybind"
 import { createColors, createFrames } from "../tui/ui/spinner"
 import type { FooterKeybinds, FooterState } from "./types"
-
-const HIGHLIGHT_COLOR = "#38bdf8"
-const MUTED_COLOR = "#64748b"
-const TEXT_COLOR = "#f8fafc"
-const SURFACE_COLOR = "#0f172a"
+import { RUN_THEME_FALLBACK, type RunFooterTheme } from "./theme"
 
 const LEADER_TIMEOUT_MS = 2000
 
@@ -70,6 +66,7 @@ type Key = {
 
 type RunFooterViewProps = {
   state: () => FooterState
+  theme?: RunFooterTheme
   keybinds: FooterKeybinds
   history?: string[]
   agent: string
@@ -170,15 +167,16 @@ export function RunFooterView(props: RunFooterViewProps) {
   const duration = createMemo(() => props.state().duration)
   const usage = createMemo(() => props.state().usage)
   const interruptKey = createMemo(() => interrupt() || "/exit")
+  const theme = createMemo(() => props.theme ?? RUN_THEME_FALLBACK.footer)
   const spin = createMemo(() => ({
     frames: createFrames({
-      color: HIGHLIGHT_COLOR,
+      color: theme().highlight,
       style: "blocks",
       inactiveFactor: 0.6,
       minAlpha: 0.3,
     }),
     color: createColors({
-      color: HIGHLIGHT_COLOR,
+      color: theme().highlight,
       style: "blocks",
       inactiveFactor: 0.6,
       minAlpha: 0.3,
@@ -468,7 +466,7 @@ export function RunFooterView(props: RunFooterViewProps) {
         width="100%"
         flexShrink={0}
         border={["left"]}
-        borderColor={HIGHLIGHT_COLOR}
+        borderColor={theme().highlight}
         customBorderChars={{
           ...EMPTY_BORDER,
           vertical: "┃",
@@ -483,7 +481,7 @@ export function RunFooterView(props: RunFooterViewProps) {
           paddingRight={2}
           paddingTop={1}
           flexDirection="column"
-          backgroundColor={SURFACE_COLOR}
+          backgroundColor={theme().surface}
           gap={0}
         >
           <textarea
@@ -493,12 +491,12 @@ export function RunFooterView(props: RunFooterViewProps) {
             maxHeight={TEXTAREA_MAX_ROWS}
             wrapMode="word"
             placeholder={placeholder()}
-            placeholderColor={MUTED_COLOR}
-            textColor={TEXT_COLOR}
-            focusedTextColor={TEXT_COLOR}
-            backgroundColor={SURFACE_COLOR}
-            focusedBackgroundColor={SURFACE_COLOR}
-            cursorColor={TEXT_COLOR}
+            placeholderColor={theme().muted}
+            textColor={theme().text}
+            focusedTextColor={theme().text}
+            backgroundColor={theme().surface}
+            focusedBackgroundColor={theme().surface}
+            cursorColor={theme().text}
             keyBindings={bindings()}
             onSubmit={onSubmit}
             onKeyDown={onKeyDown}
@@ -509,10 +507,10 @@ export function RunFooterView(props: RunFooterViewProps) {
           />
 
           <box id="run-direct-footer-meta-row" width="100%" flexDirection="row" gap={1} flexShrink={0} paddingTop={1}>
-            <text id="run-direct-footer-agent" fg={HIGHLIGHT_COLOR} wrapMode="none" truncate flexShrink={0}>
+            <text id="run-direct-footer-agent" fg={theme().highlight} wrapMode="none" truncate flexShrink={0}>
               {props.agent}
             </text>
-            <text id="run-direct-footer-model" fg={MUTED_COLOR} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
+            <text id="run-direct-footer-model" fg={theme().muted} wrapMode="none" truncate flexGrow={1} flexShrink={1}>
               {props.state().model}
             </text>
           </box>
@@ -524,7 +522,7 @@ export function RunFooterView(props: RunFooterViewProps) {
         width="100%"
         height={1}
         border={["left"]}
-        borderColor={HIGHLIGHT_COLOR}
+        borderColor={theme().highlight}
         customBorderChars={{
           ...EMPTY_BORDER,
           vertical: "╹",
@@ -536,7 +534,7 @@ export function RunFooterView(props: RunFooterViewProps) {
           width="100%"
           height={1}
           border={["bottom"]}
-          borderColor={SURFACE_COLOR}
+          borderColor={theme().line}
           customBorderChars={{
             ...EMPTY_BORDER,
             horizontal: "▀",
@@ -556,7 +554,7 @@ export function RunFooterView(props: RunFooterViewProps) {
         <Show when={busy() || exiting()}>
           <box id="run-direct-footer-hint-left" flexDirection="row" gap={1} flexShrink={0}>
             <Show when={exiting()}>
-              <text id="run-direct-footer-hint-exit" fg={HIGHLIGHT_COLOR} wrapMode="none" truncate marginLeft={1}>
+              <text id="run-direct-footer-hint-exit" fg={theme().highlight} wrapMode="none" truncate marginLeft={1}>
                 Press Ctrl-c again to exit
               </text>
             </Show>
@@ -568,12 +566,12 @@ export function RunFooterView(props: RunFooterViewProps) {
 
               <text
                 id="run-direct-footer-hint-interrupt"
-                fg={armed() ? HIGHLIGHT_COLOR : TEXT_COLOR}
+                fg={armed() ? theme().highlight : theme().text}
                 wrapMode="none"
                 truncate
               >
                 {interruptKey()}{" "}
-                <span style={{ fg: armed() ? HIGHLIGHT_COLOR : MUTED_COLOR }}>
+                <span style={{ fg: armed() ? theme().highlight : theme().muted }}>
                   {armed() ? "again to interrupt" : "interrupt"}
                 </span>
               </text>
@@ -585,22 +583,22 @@ export function RunFooterView(props: RunFooterViewProps) {
 
         <box id="run-direct-footer-hint-group" flexDirection="row" gap={2} flexShrink={0} justifyContent="flex-end">
           <Show when={duration().length > 0}>
-            <text id="run-direct-footer-duration" fg={MUTED_COLOR} wrapMode="none" truncate>
+            <text id="run-direct-footer-duration" fg={theme().muted} wrapMode="none" truncate>
               {duration()}
             </text>
           </Show>
           <Show when={queue() > 0}>
-            <text id="run-direct-footer-queue" fg={MUTED_COLOR} wrapMode="none" truncate>
+            <text id="run-direct-footer-queue" fg={theme().muted} wrapMode="none" truncate>
               {queue()} queued
             </text>
           </Show>
           <Show when={usage().length > 0}>
-            <text id="run-direct-footer-usage" fg={MUTED_COLOR} wrapMode="none" truncate>
+            <text id="run-direct-footer-usage" fg={theme().muted} wrapMode="none" truncate>
               {usage()}
             </text>
           </Show>
           <Show when={variant().length > 0 && hints().variant}>
-            <text id="run-direct-footer-hint-variant" fg={MUTED_COLOR} wrapMode="none" truncate>
+            <text id="run-direct-footer-hint-variant" fg={theme().muted} wrapMode="none" truncate>
               {variant()} variant
             </text>
           </Show>

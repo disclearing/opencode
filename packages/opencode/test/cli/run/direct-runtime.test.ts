@@ -244,6 +244,27 @@ describe("run runtime", () => {
     expect(hit).toBe(true)
   })
 
+  test("close resolves even when run ignores abort", async () => {
+    const ui = createFooter()
+
+    const queue = runPromptQueue({
+      footer: ui.footer,
+      run: async () => {
+        await new Promise<void>(() => {})
+      },
+    })
+
+    ui.submit("one")
+    ui.close()
+
+    const result = await Promise.race([
+      queue.then(() => "done" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
+    ])
+
+    expect(result).toBe("done")
+  })
+
   test("keeps initial input whitespace", async () => {
     const ui = createFooter()
     const prompts: string[] = []

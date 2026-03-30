@@ -1,52 +1,28 @@
 import {
   BoxRenderable,
   TextRenderable,
+  type ColorInput,
   type ScrollbackRenderContext,
   type ScrollbackSnapshot,
   type ScrollbackWriter,
 } from "@opentui/core"
+import { RUN_THEME_FALLBACK, type RunEntryTheme } from "./theme"
 import type { EntryKind } from "./types"
 
 type EntryStyle = {
-  label: string
-  border: string
-  heading: string
-  body: string
+  border: ColorInput
+  heading: ColorInput
+  body: ColorInput
 }
 
 const MAX_ENTRY_WIDTH = 92
 
-const ENTRY_STYLES: Record<EntryKind, EntryStyle> = {
-  system: {
-    label: "SYSTEM",
-    border: "#64748b",
-    heading: "#94a3b8",
-    body: "#cbd5e1",
-  },
-  user: {
-    label: "YOU",
-    border: "#38bdf8",
-    heading: "#7dd3fc",
-    body: "#e0f2fe",
-  },
-  assistant: {
-    label: "ASSISTANT",
-    border: "#22d3ee",
-    heading: "#67e8f9",
-    body: "#f8fafc",
-  },
-  tool: {
-    label: "TOOL",
-    border: "#f59e0b",
-    heading: "#fcd34d",
-    body: "#fef3c7",
-  },
-  error: {
-    label: "ERROR",
-    border: "#ef4444",
-    heading: "#fca5a5",
-    body: "#fee2e2",
-  },
+const ENTRY_LABEL: Record<EntryKind, string> = {
+  system: "SYSTEM",
+  user: "YOU",
+  assistant: "ASSISTANT",
+  tool: "TOOL",
+  error: "ERROR",
 }
 
 let snapshotNodeCounter = 0
@@ -153,11 +129,12 @@ function buildSnapshot(
   text: string,
   timestamp: Date,
   context: ScrollbackRenderContext,
+  theme: RunEntryTheme,
 ): ScrollbackSnapshot {
-  const style = ENTRY_STYLES[kind]
+  const style: EntryStyle = theme[kind]
   const width = Math.max(3, context.width)
   const maxTextWidth = Math.max(18, Math.min(width - 3, MAX_ENTRY_WIDTH))
-  const headingCore = truncateText(`${style.label} | ${formatTimestamp(timestamp)}`, maxTextWidth - 1)
+  const headingCore = truncateText(`${ENTRY_LABEL[kind]} | ${formatTimestamp(timestamp)}`, maxTextWidth - 1)
   const headingLine = ` ${headingCore}`
   const bodyLines = wrapText(text, Math.max(1, maxTextWidth - 1)).map((line) => ` ${line}`)
   const longestBody = bodyLines.reduce((maxWidth, line) => Math.max(maxWidth, lineColumns(line)), 1)
@@ -240,6 +217,11 @@ function buildSnapshot(
   }
 }
 
-export function entryWriter(kind: EntryKind, text: string, timestamp: Date = new Date()): ScrollbackWriter {
-  return (context) => buildSnapshot(kind, text.replace(/\r/g, ""), timestamp, context)
+export function entryWriter(
+  kind: EntryKind,
+  text: string,
+  timestamp: Date = new Date(),
+  theme: RunEntryTheme = RUN_THEME_FALLBACK.entry,
+): ScrollbackWriter {
+  return (context) => buildSnapshot(kind, text.replace(/\r/g, ""), timestamp, context, theme)
 }

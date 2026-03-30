@@ -4,6 +4,7 @@ import { createComponent, createSignal, type Accessor, type Setter } from "solid
 import { Keybind } from "../../../util/keybind"
 import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
 import { entryWriter } from "./scrollback"
+import type { RunTheme } from "./theme"
 import type { EntryKind, FooterApi, FooterKeybinds, FooterPatch, FooterState } from "./types"
 
 type CycleResult = {
@@ -16,9 +17,11 @@ type RunFooterOptions = {
   modelLabel: string
   first: boolean
   history?: string[]
+  theme: RunTheme
   keybinds: FooterKeybinds
   onCycleVariant?: () => CycleResult | void
   onInterrupt?: () => void
+  onExit?: () => void
 }
 
 export class RunFooter implements FooterApi {
@@ -61,6 +64,7 @@ export class RunFooter implements FooterApi {
       () =>
         createComponent(RunFooterView, {
           state: this.state,
+          theme: options.theme.footer,
           keybinds: options.keybinds,
           history: options.history,
           agent: options.agentLabel,
@@ -141,7 +145,7 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    this.renderer.writeToScrollback(entryWriter(kind, text, new Date()))
+    this.renderer.writeToScrollback(entryWriter(kind, text, new Date(), this.options.theme.entry))
     this.scheduleSettleRender()
   }
 
@@ -321,6 +325,7 @@ export class RunFooter implements FooterApi {
     this.clearExitTimer()
     this.patch({ exit: 0, status: "exiting" })
     this.close()
+    this.options.onExit?.()
     return true
   }
 

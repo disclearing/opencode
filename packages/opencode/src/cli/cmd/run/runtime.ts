@@ -3,6 +3,7 @@ import { TuiConfig } from "../../../config/tui"
 import { Locale } from "../../../util/locale"
 import { RunFooter } from "./footer"
 import { formatUnknownError, runPromptTurn } from "./stream"
+import { resolveRunTheme } from "./theme"
 import type { FooterApi, FooterKeybinds, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 6
@@ -213,11 +214,15 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   let run = false
   let closed = input.footer.isClosed
   let ctrl: AbortController | undefined
+  let stop: (() => void) | undefined
   let err: unknown
   let hasErr = false
   let done: (() => void) | undefined
   const wait = new Promise<void>((resolve) => {
     done = resolve
+  })
+  const until = new Promise<void>((resolve) => {
+    stop = resolve
   })
 
   const fail = (error: unknown) => {
@@ -260,7 +265,19 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
         const next = new AbortController()
         ctrl = next
         try {
-          await input.run(prompt, next.signal)
+          const task = input.run(prompt, next.signal).then(
+            () => ({ type: "done" as const }),
+            (error) => ({ type: "error" as const, error }),
+          )
+          const out = await Promise.race([task, until.then(() => ({ type: "closed" as const }))])
+          if (out.type === "closed") {
+            next.abort()
+            break
+          }
+
+          if (out.type === "error") {
+            throw out.error
+          }
         } finally {
           if (ctrl === next) {
             ctrl = undefined
@@ -300,6 +317,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     closed = true
     q.length = 0
     ctrl?.abort()
+    stop?.()
     finish()
   })
 
@@ -349,6 +367,8 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     consoleMode: "disabled",
     clearOnShutdown: false,
   })
+  const theme = await resolveRunTheme(renderer)
+  renderer.setBackgroundColor(theme.background)
 
   const footer = new RunFooter(renderer, {
     ...footerLabels({
@@ -358,6 +378,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     }),
     first,
     history,
+    theme,
     keybinds,
     onCycleVariant: () => {
       if (!input.model || variants.length === 0) {
@@ -386,6 +407,10 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
         .finally(() => {
           aborting = false
         })
+    },
+    onExit: () => {
+      shutdown(renderer)
+      process.exit(0)
     },
   })
 
