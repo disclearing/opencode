@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { queueSplash, runPromptQueue } from "../../../src/cli/cmd/run/runtime"
+import { pickVariant, queueSplash, resolveVariant, runPromptQueue } from "../../../src/cli/cmd/run/runtime"
 import type { EntryKind, FooterApi, FooterPatch } from "../../../src/cli/cmd/run/types"
 
 function createFooter() {
@@ -75,6 +75,100 @@ function createFooter() {
 }
 
 describe("run runtime", () => {
+  test("restores variant from latest matching user message", () => {
+    expect(
+      pickVariant(
+        {
+          providerID: "openai",
+          modelID: "gpt-5",
+        },
+        [
+          {
+            info: {
+              role: "user",
+              model: {
+                providerID: "openai",
+                modelID: "gpt-5",
+              },
+              variant: "high",
+            },
+          },
+          {
+            info: {
+              role: "user",
+              model: {
+                providerID: "anthropic",
+                modelID: "claude-3",
+              },
+              variant: "max",
+            },
+          },
+          {
+            info: {
+              role: "user",
+              model: {
+                providerID: "openai",
+                modelID: "gpt-5",
+              },
+              variant: "minimal",
+            },
+          },
+        ] as unknown as Parameters<typeof pickVariant>[1],
+      ),
+    ).toBe("minimal")
+  })
+
+  test("respects default variant from latest matching user message", () => {
+    expect(
+      pickVariant(
+        {
+          providerID: "openai",
+          modelID: "gpt-5",
+        },
+        [
+          {
+            info: {
+              role: "user",
+              model: {
+                providerID: "openai",
+                modelID: "gpt-5",
+              },
+              variant: "high",
+            },
+          },
+          {
+            info: {
+              role: "assistant",
+              providerID: "openai",
+              modelID: "gpt-5",
+            },
+          },
+          {
+            info: {
+              role: "user",
+              model: {
+                providerID: "openai",
+                modelID: "gpt-5",
+              },
+            },
+          },
+        ] as unknown as Parameters<typeof pickVariant>[1],
+      ),
+    ).toBeUndefined()
+  })
+
+  test("keeps saved variant when session variant is default", () => {
+    expect(resolveVariant(undefined, undefined, "high", ["high", "minimal"])).toBe("high")
+  })
+
+  test("session variant overrides saved variant", () => {
+    expect(resolveVariant(undefined, "minimal", "high", ["high", "minimal"])).toBe("minimal")
+  })
+
+  test("cli variant overrides session and saved variant", () => {
+    expect(resolveVariant("custom", "minimal", "high", ["high", "minimal"])).toBe("custom")
+  })
+
   test("queues entry and exit splash only once", () => {
     const writes: unknown[] = []
     let renders = 0
