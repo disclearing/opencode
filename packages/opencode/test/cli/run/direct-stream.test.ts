@@ -184,18 +184,18 @@ describe("run stream", () => {
       status: "assistant responding",
     })
     expect(patched).toContainEqual({
+      phase: "running",
+      status: "running investigate",
+    })
+    expect(patched).toContainEqual({
       usage: "125 (13%) · $2.31",
     })
-    expect(appended).toEqual([
-      { kind: "system", text: "main-agent · main-model" },
-      { kind: "assistant", text: "assistant reply" },
-      { kind: "tool", text: "running investigate" },
-      { kind: "tool", text: "$ ls\nfile-a" },
-    ])
+    expect(appended).toEqual([{ kind: "assistant", text: "assistant reply" }])
   })
 
   test("auto rejects permissions and emits session errors", async () => {
     const appended: Array<{ kind: string; text: string }> = []
+    const patched: unknown[] = []
     const permissionReplies: unknown[] = []
 
     const sdk = {
@@ -263,7 +263,9 @@ describe("run stream", () => {
         onClose() {
           return () => {}
         },
-        patch() {},
+        patch(next) {
+          patched.push(next)
+        },
         append(kind, text) {
           appended.push({ kind, text })
         },
@@ -279,11 +281,12 @@ describe("run stream", () => {
       },
     ])
 
+    expect(patched).toContainEqual({
+      phase: "running",
+      status: "permission requested: read (/tmp/file.txt); auto-rejecting",
+    })
+
     expect(appended).toEqual([
-      {
-        kind: "system",
-        text: "permission requested: read (/tmp/file.txt); auto-rejecting",
-      },
       {
         kind: "error",
         text: "permission denied",

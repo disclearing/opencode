@@ -1,12 +1,6 @@
-import path from "path"
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
-import { Locale } from "../../../util/locale"
+import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
+import { createSessionData, reduceSessionData } from "./session-data"
 import type { FooterApi, RunFilePart, RunInput } from "./types"
-
-const money = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-})
 
 type TurnInput = {
   sdk: OpencodeClient
@@ -21,101 +15,6 @@ type TurnInput = {
   limits: Record<string, number>
   footer: FooterApi
   signal?: AbortSignal
-}
-
-function normalizePath(input?: string): string {
-  if (!input) return ""
-  if (path.isAbsolute(input)) return path.relative(process.cwd(), input) || "."
-  return input
-}
-
-function formatToolTitle(part: ToolPart): string {
-  const state = part.state as {
-    input?: Record<string, unknown>
-    title?: string
-  }
-  const input = state.input
-
-  if (part.tool === "bash" && typeof input?.command === "string") {
-    return `$ ${input.command}`
-  }
-
-  if ((part.tool === "read" || part.tool === "write" || part.tool === "edit") && typeof input?.filePath === "string") {
-    return `${part.tool} ${normalizePath(input.filePath)}`
-  }
-
-  if (part.tool === "glob" && typeof input?.pattern === "string") {
-    return `glob ${input.pattern}`
-  }
-
-  if (part.tool === "grep" && typeof input?.pattern === "string") {
-    return `grep ${input.pattern}`
-  }
-
-  if (part.tool === "webfetch" && typeof input?.url === "string") {
-    return `webfetch ${input.url}`
-  }
-
-  if (part.tool === "skill" && typeof input?.name === "string") {
-    return `skill ${input.name}`
-  }
-
-  if (part.tool === "task") {
-    if (typeof input?.description === "string" && input.description.trim()) {
-      return `task ${input.description}`
-    }
-    if (typeof input?.subagent_type === "string" && input.subagent_type.trim()) {
-      return `task ${input.subagent_type}`
-    }
-  }
-
-  if (typeof state.title === "string" && state.title.trim()) {
-    return `${part.tool} ${state.title}`
-  }
-
-  if (input && typeof input === "object" && Object.keys(input).length > 0) {
-    return `${part.tool} ${JSON.stringify(input)}`
-  }
-
-  return part.tool
-}
-
-function formatToolOutput(part: ToolPart): string | undefined {
-  const state = part.state as {
-    output?: unknown
-    input?: {
-      todos?: {
-        content: string
-        status: string
-      }[]
-    }
-  }
-  if (typeof state.output === "string" && state.output.trim().length > 0) {
-    return state.output.trimEnd()
-  }
-
-  if (part.tool !== "todowrite") {
-    return
-  }
-
-  const todos = state.input?.todos
-  if (!Array.isArray(todos) || todos.length === 0) {
-    return
-  }
-
-  return todos.map((item) => `${item.status === "completed" ? "[x]" : "[ ]"} ${item.content}`).join("\n")
-}
-
-function formatSessionError(error: {
-  name: string
-  data?: {
-    message?: string
-  }
-}): string {
-  if (error.data?.message) {
-    return String(error.data.message)
-  }
-  return String(error.name)
 }
 
 export function formatUnknownError(error: unknown): string {
@@ -138,43 +37,6 @@ export function formatUnknownError(error: unknown): string {
   }
 
   return "unknown error"
-}
-
-function formatUsage(
-  tokens: {
-    input?: number
-    output?: number
-    reasoning?: number
-    cache?: {
-      read?: number
-      write?: number
-    }
-  },
-  limit: number | undefined,
-  cost: number | undefined,
-): string | undefined {
-  const total =
-    (tokens.input ?? 0) +
-    (tokens.output ?? 0) +
-    (tokens.reasoning ?? 0) +
-    (tokens.cache?.read ?? 0) +
-    (tokens.cache?.write ?? 0)
-
-  if (total <= 0) {
-    if (typeof cost === "number" && cost > 0) {
-      return money.format(cost)
-    }
-    return
-  }
-
-  const usage =
-    limit && limit > 0 ? `${Locale.number(total)} (${Math.round((total / limit) * 100)}%)` : Locale.number(total)
-
-  if (typeof cost === "number" && cost > 0) {
-    return `${usage} · ${money.format(cost)}`
-  }
-
-  return usage
 }
 
 export async function runPromptTurn(input: TurnInput): Promise<void> {
@@ -206,110 +68,40 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       void stream.return().catch(() => {})
     }
   }
-  const seen = new Set<string>()
-  const runningTasks = new Set<string>()
-  let announcedAssistant = false
+  let data = createSessionData()
 
   const watch = (async () => {
     try {
-      for await (const event of events.stream) {
+      for await (const item of events.stream) {
         if (input.footer.isClosed) {
           break
         }
 
-        if (
-          event.type === "message.updated" &&
-          event.properties.sessionID === input.sessionID &&
-          event.properties.info.role === "assistant"
-        ) {
-          const info = event.properties.info as {
-            agent: string
-            modelID: string
-            providerID: string
-            tokens: {
-              input?: number
-              output?: number
-              reasoning?: number
-              cache?: {
-                read?: number
-                write?: number
-              }
-            }
-            cost?: number
-          }
+        const event = item as Event
+        const next = reduceSessionData({
+          data,
+          event,
+          sessionID: input.sessionID,
+          thinking: input.thinking,
+          limits: input.limits,
+        })
+        data = next.data
 
-          if (!announcedAssistant) {
-            input.footer.append("system", `${info.agent} · ${info.modelID}`)
-            input.footer.patch({
-              phase: "running",
-              status: "assistant responding",
-            })
-            announcedAssistant = true
-          }
-
-          const usage = info.tokens
-            ? formatUsage(info.tokens, input.limits[`${info.providerID}/${info.modelID}`], info.cost)
-            : undefined
-          if (usage) {
-            input.footer.patch({ usage })
-          }
+        for (const commit of next.commits) {
+          input.footer.append(commit.kind, commit.text)
         }
 
-        if (event.type === "message.part.updated") {
-          const part = event.properties.part
-          if (part.sessionID !== input.sessionID) continue
-
-          if (
-            part.type === "tool" &&
-            part.tool === "task" &&
-            part.state.status === "running" &&
-            runningTasks.has(part.id) === false
-          ) {
-            runningTasks.add(part.id)
-            const state = part.state as {
-              input?: { description?: string; subagent_type?: string }
-            }
-            const description = state.input?.description?.trim() || state.input?.subagent_type?.trim() || "task"
-            input.footer.append("tool", `running ${description}`)
-          }
-
-          if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
-            if (seen.has(part.id)) continue
-            seen.add(part.id)
-
-            if (part.state.status === "error") {
-              input.footer.append("error", `${part.tool} failed\n${part.state.error}`)
-              continue
-            }
-
-            const title = formatToolTitle(part)
-            const output = formatToolOutput(part)
-            input.footer.append("tool", output ? `${title}\n${output}` : title)
-            continue
-          }
-
-          if (part.type === "text" && part.time?.end) {
-            if (seen.has(part.id)) continue
-            seen.add(part.id)
-            const text = part.text.trim()
-            if (!text) continue
-            input.footer.append("assistant", text)
-            continue
-          }
-
-          if (part.type === "reasoning" && part.time?.end && input.thinking) {
-            if (seen.has(part.id)) continue
-            seen.add(part.id)
-            const text = part.text.trim()
-            if (!text) continue
-            input.footer.append("system", `Thinking: ${text}`)
-            continue
-          }
+        if (next.status) {
+          input.footer.patch({
+            phase: "running",
+            status: next.status,
+          })
         }
 
-        if (event.type === "session.error") {
-          if (event.properties.sessionID !== input.sessionID || !event.properties.error) continue
-          input.footer.append("error", formatSessionError(event.properties.error))
+        if (next.usage) {
+          input.footer.patch({
+            usage: next.usage,
+          })
         }
 
         if (
@@ -323,10 +115,6 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         if (event.type === "permission.asked") {
           const permission = event.properties
           if (permission.sessionID !== input.sessionID) continue
-          input.footer.append(
-            "system",
-            `permission requested: ${permission.permission} (${permission.patterns.join(", ")}); auto-rejecting`,
-          )
           await input.sdk.permission.reply({
             requestID: permission.id,
             reply: "reject",
@@ -358,7 +146,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       return
     }
 
-    if (!input.footer.isClosed && !announcedAssistant) {
+    if (!input.footer.isClosed && !data.announced) {
       input.footer.patch({
         phase: "running",
         status: "waiting for assistant",
