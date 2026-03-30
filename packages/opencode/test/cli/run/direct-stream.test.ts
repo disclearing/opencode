@@ -294,6 +294,215 @@ describe("run stream", () => {
     ])
   })
 
+  test("keeps status-only events out of transcript commits", async () => {
+    const appended: Array<{ kind: string; text: string }> = []
+    const patched: unknown[] = []
+    const replies: unknown[] = []
+
+    const sdk = {
+      event: {
+        subscribe: async () =>
+          eventStream([
+            {
+              type: "message.updated",
+              properties: {
+                sessionID: "session-1",
+                info: {
+                  role: "assistant",
+                  agent: "main-agent",
+                  modelID: "main-model",
+                  providerID: "openai",
+                  tokens: {
+                    input: 1,
+                    output: 1,
+                    reasoning: 0,
+                    cache: { read: 0, write: 0 },
+                  },
+                },
+              },
+            },
+            {
+              type: "permission.asked",
+              properties: {
+                id: "perm-1",
+                sessionID: "session-1",
+                permission: "read",
+                patterns: ["/tmp/file.txt"],
+              },
+            },
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "tool-1",
+                  sessionID: "session-1",
+                  type: "tool",
+                  tool: "task",
+                  state: {
+                    status: "running",
+                    input: {
+                      description: "investigate",
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "tool-1",
+                  sessionID: "session-1",
+                  type: "tool",
+                  tool: "task",
+                  state: {
+                    status: "completed",
+                    input: {},
+                    output: "ok",
+                    title: "done",
+                    metadata: {},
+                    time: { start: 1, end: 2 },
+                  },
+                },
+              },
+            },
+            {
+              type: "session.status",
+              properties: {
+                sessionID: "session-1",
+                status: {
+                  type: "idle",
+                },
+              },
+            },
+          ]),
+      },
+      session: {
+        prompt: async () => {},
+      },
+      permission: {
+        reply: async (payload: unknown) => {
+          replies.push(payload)
+        },
+      },
+    } as unknown as OpencodeClient
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hello",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      footer: {
+        isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch(next) {
+          patched.push(next)
+        },
+        append(kind, text) {
+          appended.push({ kind, text })
+        },
+        close() {},
+        destroy() {},
+      },
+    })
+
+    expect(replies).toEqual([
+      {
+        requestID: "perm-1",
+        reply: "reject",
+      },
+    ])
+
+    expect(patched).toContainEqual({
+      phase: "running",
+      status: "assistant responding",
+    })
+    expect(patched).toContainEqual({
+      phase: "running",
+      status: "permission requested: read (/tmp/file.txt); auto-rejecting",
+    })
+    expect(patched).toContainEqual({
+      phase: "running",
+      status: "running investigate",
+    })
+    expect(appended).toEqual([])
+  })
+
+  test("shows waiting status when assistant never announces", async () => {
+    const patched: unknown[] = []
+    const appended: Array<{ kind: string; text: string }> = []
+
+    const sdk = {
+      event: {
+        subscribe: async () =>
+          eventStream([
+            {
+              type: "session.status",
+              properties: {
+                sessionID: "session-1",
+                status: {
+                  type: "idle",
+                },
+              },
+            },
+          ]),
+      },
+      session: {
+        prompt: async () => {},
+      },
+      permission: {
+        reply: async () => {},
+      },
+    } as unknown as OpencodeClient
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hello",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      footer: {
+        isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch(next) {
+          patched.push(next)
+        },
+        append(kind, text) {
+          appended.push({ kind, text })
+        },
+        close() {},
+        destroy() {},
+      },
+    })
+
+    expect(patched).toContainEqual({
+      phase: "running",
+      status: "waiting for assistant",
+    })
+    expect(appended).toEqual([])
+  })
+
   test("returns immediately when close signal is already aborted", async () => {
     let subscribed = 0
     let prompted = 0
