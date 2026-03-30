@@ -422,4 +422,74 @@ describe("run stream", () => {
 
     expect(aborted).toBe(true)
   })
+
+  test("canceled turn does not wait for stuck event stream", async () => {
+    const sdk = {
+      event: {
+        subscribe: async () => ({
+          stream: (async function* () {
+            await new Promise<void>(() => {})
+          })(),
+        }),
+      },
+      session: {
+        prompt: async (_: unknown, options?: { signal?: AbortSignal }) => {
+          await new Promise<void>((resolve, reject) => {
+            if (options?.signal?.aborted) {
+              reject(new Error("aborted"))
+              return
+            }
+
+            options?.signal?.addEventListener(
+              "abort",
+              () => {
+                reject(new Error("aborted"))
+              },
+              { once: true },
+            )
+          })
+        },
+      },
+      permission: {
+        reply: async () => {},
+      },
+    } as unknown as OpencodeClient
+
+    const ctrl = new AbortController()
+    const run = runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hello",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      signal: ctrl.signal,
+      footer: {
+        isClosed: false,
+        onPrompt() {
+          return () => {}
+        },
+        onClose() {
+          return () => {}
+        },
+        patch() {},
+        append() {},
+        close() {},
+        destroy() {},
+      },
+    })
+
+    ctrl.abort()
+
+    const result = await Promise.race([
+      run.then(() => "done" as const),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
+    ])
+
+    expect(result).toBe("done")
+  })
 })

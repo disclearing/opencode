@@ -409,10 +409,17 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
         })
     },
     onExit: () => {
-      shutdown(renderer)
-      process.exit(0)
+      try {
+        shutdown(renderer)
+      } finally {
+        process.exit(0)
+      }
     },
   })
+  const sigint = () => {
+    footer.requestExit()
+  }
+  process.on("SIGINT", sigint)
 
   try {
     footer.append("system", "Interactive mode enabled. Type /exit or /quit to finish.")
@@ -446,6 +453,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
       },
     })
   } finally {
+    process.off("SIGINT", sigint)
     footer.close()
     footer.destroy()
     shutdown(renderer)

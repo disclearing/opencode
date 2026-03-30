@@ -198,6 +198,14 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     input.signal?.removeEventListener("abort", stop)
     throw error
   }
+  const stream = events.stream as unknown as {
+    return?: (value?: unknown) => Promise<unknown>
+  }
+  const close = () => {
+    if (typeof stream.return === "function") {
+      void stream.return().catch(() => {})
+    }
+  }
   const seen = new Set<string>()
   const runningTasks = new Set<string>()
   let announcedAssistant = false
@@ -361,12 +369,16 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
   } catch (error) {
     const canceled = abort.signal.aborted || input.signal?.aborted === true
     abort.abort()
-    await watch.catch(() => {})
     if (canceled) {
+      close()
+      void watch.catch(() => {})
       return
     }
+
+    await watch.catch(() => {})
     throw error
   } finally {
+    close()
     input.signal?.removeEventListener("abort", stop)
     abort.abort()
   }

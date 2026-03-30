@@ -157,6 +157,10 @@ export class RunFooter implements FooterApi {
     this.notifyClose()
   }
 
+  public requestExit(): boolean {
+    return this.handleExit()
+  }
+
   public destroy(): void {
     if (this.destroyed) {
       return
