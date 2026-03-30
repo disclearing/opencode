@@ -41,6 +41,17 @@ describe("run stream", () => {
                   role: "assistant",
                   agent: "main-agent",
                   modelID: "main-model",
+                  providerID: "openai",
+                  cost: 2.31,
+                  tokens: {
+                    input: 42,
+                    output: 58,
+                    reasoning: 10,
+                    cache: {
+                      read: 15,
+                      write: 0,
+                    },
+                  },
                 },
               },
             },
@@ -141,6 +152,9 @@ describe("run stream", () => {
       ],
       includeFiles: true,
       thinking: false,
+      limits: {
+        "openai/main-model": 1000,
+      },
       footer: {
         isClosed: false,
         onPrompt() {
@@ -167,6 +181,9 @@ describe("run stream", () => {
     expect(patched).toContainEqual({
       phase: "running",
       status: "assistant responding",
+    })
+    expect(patched).toContainEqual({
+      usage: "125 (13%) · $2.31",
     })
     expect(appended).toEqual([
       { kind: "system", text: "main-agent · main-model" },
@@ -236,6 +253,7 @@ describe("run stream", () => {
       files: [],
       includeFiles: false,
       thinking: false,
+      limits: {},
       footer: {
         isClosed: false,
         onPrompt() {

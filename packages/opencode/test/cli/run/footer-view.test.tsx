@@ -53,6 +53,10 @@ describe("run footer view", () => {
       status: "",
       queue: 0,
       model: "model",
+      duration: "",
+      usage: "",
+      first: true,
+      interrupt: 0,
     })
 
     setup = await testRender(
@@ -62,6 +66,7 @@ describe("run footer view", () => {
           keybinds={{
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -71,6 +76,7 @@ describe("run footer view", () => {
             return true
           }}
           onCycle={() => {}}
+          onInterrupt={() => false}
           onExit={() => {}}
           onRows={() => {}}
           onStatus={(text) => {
@@ -100,6 +106,10 @@ describe("run footer view", () => {
       status: "",
       queue: 0,
       model: "model",
+      duration: "",
+      usage: "",
+      first: true,
+      interrupt: 0,
     })
 
     setup = await testRender(
@@ -109,6 +119,7 @@ describe("run footer view", () => {
           keybinds={{
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -118,6 +129,7 @@ describe("run footer view", () => {
             return true
           }}
           onCycle={() => {}}
+          onInterrupt={() => false}
           onExit={() => {}}
           onRows={() => {}}
           onStatus={(text) => {
@@ -207,12 +219,16 @@ describe("run footer view", () => {
     })
   })
 
-  test("queued indicator appears when queue is nonzero", async () => {
+  test("placeholder switches after first prompt", async () => {
     const [state, setState] = createSignal<FooterState>({
       phase: "idle",
       status: "",
       queue: 0,
       model: "model",
+      duration: "",
+      usage: "",
+      first: true,
+      interrupt: 0,
     })
 
     setup = await testRender(
@@ -222,12 +238,205 @@ describe("run footer view", () => {
           keybinds={{
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
           agent="Agent default"
           onSubmit={() => true}
           onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 120,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain('Ask anything... "Fix a TODO in the codebase"')
+
+    setState((state) => ({
+      ...state,
+      first: false,
+    }))
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Ask anything...")
+    expect(setup.captureCharFrame()).not.toContain("Fix a TODO in the codebase")
+  })
+
+  test("baseline scaffold follows 6-line layout", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "gpt-5.3-codex · openai",
+      duration: "1m 18s",
+      usage: "167.8K (42%)",
+      first: true,
+      interrupt: 0,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Agent default"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 120,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    const lines = setup.captureCharFrame().split("\n")
+
+    expect(lines[0]).toMatch(/^┃\s*$/)
+    expect(lines[1]?.startsWith("┃")).toBe(true)
+    expect(lines[1]).toContain('Ask anything... "Fix a TODO in the codebase"')
+    expect(lines[2]).toMatch(/^┃\s*$/)
+    expect(lines[3]?.startsWith("┃")).toBe(true)
+    expect(lines[3]).toContain("Agent default")
+    expect(lines[4]).toMatch(/^╹▀+$/)
+    expect(lines[5]).not.toContain("interrupt")
+    expect(lines[5]).toContain("1m 18s")
+    expect(lines[5]).toContain("167.8K (42%)")
+    expect(lines[5]).toContain("ctrl+t variant")
+  })
+
+  test("renders usage and duration fields", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "1m 18s",
+      usage: "167.8K (42%)",
+      first: false,
+      interrupt: 0,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Agent default"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 120,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    const frame = setup.captureCharFrame()
+    expect(frame).toContain("1m 18s")
+    expect(frame).toContain("167.8K (42%)")
+  })
+
+  test("interrupt hint reflects running escape state", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "assistant responding",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 1,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Agent default"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 120,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("esc again to interrupt")
+  })
+
+  test("queued indicator appears when queue is nonzero", async () => {
+    const [state, setState] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: true,
+      interrupt: 0,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Agent default"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
           onExit={() => {}}
           onRows={() => {}}
           onStatus={() => {}}

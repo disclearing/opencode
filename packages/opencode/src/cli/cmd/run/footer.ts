@@ -1,6 +1,7 @@
 import { CliRenderEvents, type CliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
+import { Keybind } from "../../../util/keybind"
 import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
 import { entryWriter } from "./scrollback"
 import type { EntryKind, FooterApi, FooterKeybinds, FooterPatch, FooterState } from "./types"
@@ -13,8 +14,10 @@ type CycleResult = {
 type RunFooterOptions = {
   agentLabel: string
   modelLabel: string
+  first: boolean
   keybinds: FooterKeybinds
   onCycleVariant?: () => CycleResult | void
+  onInterrupt?: () => void
 }
 
 export class RunFooter implements FooterApi {
@@ -27,6 +30,8 @@ export class RunFooter implements FooterApi {
   private state: Accessor<FooterState>
   private setState: Setter<FooterState>
   private settle = false
+  private interruptTimeout: NodeJS.Timeout | undefined
+  private interruptHint: string
 
   constructor(
     private renderer: CliRenderer,
@@ -37,10 +42,15 @@ export class RunFooter implements FooterApi {
       status: "",
       queue: 0,
       model: options.modelLabel,
+      duration: "",
+      usage: "",
+      first: options.first,
+      interrupt: 0,
     })
     this.state = state
     this.setState = setState
     this.base = Math.max(1, renderer.footerHeight - TEXTAREA_MIN_ROWS)
+    this.interruptHint = this.printableBinding(options.keybinds.interrupt, options.keybinds.leader) || "esc"
 
     this.renderer.on(CliRenderEvents.DESTROY, this.handleDestroy)
 
@@ -52,6 +62,7 @@ export class RunFooter implements FooterApi {
           agent: options.agentLabel,
           onSubmit: this.handlePrompt,
           onCycle: this.handleCycle,
+          onInterrupt: this.handleInterrupt,
           onExit: () => this.close(),
           onRows: this.syncRows,
           onStatus: this.setStatus,
@@ -98,7 +109,19 @@ export class RunFooter implements FooterApi {
       status: typeof next.status === "string" ? next.status : prev.status,
       queue: typeof next.queue === "number" ? Math.max(0, next.queue) : prev.queue,
       model: typeof next.model === "string" ? next.model : prev.model,
+      duration: typeof next.duration === "string" ? next.duration : prev.duration,
+      usage: typeof next.usage === "string" ? next.usage : prev.usage,
+      first: typeof next.first === "boolean" ? next.first : prev.first,
+      interrupt:
+        typeof next.interrupt === "number" && Number.isFinite(next.interrupt)
+          ? Math.max(0, Math.floor(next.interrupt))
+          : prev.interrupt,
     }
+
+    if (state.phase === "idle") {
+      state.interrupt = 0
+    }
+
     this.setState(state)
   }
 
@@ -130,6 +153,7 @@ export class RunFooter implements FooterApi {
 
     this.destroyed = true
     this.notifyClose()
+    this.clearInterruptTimer()
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
@@ -175,6 +199,10 @@ export class RunFooter implements FooterApi {
       return false
     }
 
+    if (this.state().first) {
+      this.patch({ first: false })
+    }
+
     if (this.prompts.size === 0) {
       this.patch({ status: "input queue unavailable" })
       return false
@@ -205,6 +233,64 @@ export class RunFooter implements FooterApi {
     this.patch(patch)
   }
 
+  private clearInterruptTimer(): void {
+    if (!this.interruptTimeout) {
+      return
+    }
+
+    clearTimeout(this.interruptTimeout)
+    this.interruptTimeout = undefined
+  }
+
+  private armInterruptTimer(): void {
+    this.clearInterruptTimer()
+    this.interruptTimeout = setTimeout(() => {
+      this.interruptTimeout = undefined
+      if (this.destroyed || this.renderer.isDestroyed || this.state().phase !== "running") {
+        return
+      }
+
+      this.patch({ interrupt: 0 })
+    }, 5000)
+  }
+
+  private handleInterrupt = (): boolean => {
+    if (this.isClosed || this.state().phase !== "running") {
+      return false
+    }
+
+    const next = this.state().interrupt + 1
+    this.patch({ interrupt: next })
+
+    if (next < 2) {
+      this.armInterruptTimer()
+      this.patch({ status: `${this.interruptHint} again to interrupt` })
+      return true
+    }
+
+    this.clearInterruptTimer()
+    this.patch({ interrupt: 0, status: "interrupting" })
+    this.options.onInterrupt?.()
+    return true
+  }
+
+  private printableBinding(binding: string, leader: string): string {
+    const first = Keybind.parse(binding).at(0)
+    if (!first) {
+      return ""
+    }
+
+    let text = Keybind.toString(first)
+    const lead = Keybind.parse(leader).at(0)
+    if (lead) {
+      text = text.replace("<leader>", Keybind.toString(lead))
+    }
+
+    text = text.replace(/escape/g, "esc")
+
+    return text
+  }
+
   private handleDestroy = (): void => {
     if (this.destroyed) {
       return
@@ -212,6 +298,7 @@ export class RunFooter implements FooterApi {
 
     this.destroyed = true
     this.notifyClose()
+    this.clearInterruptTimer()
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()

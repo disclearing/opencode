@@ -228,6 +228,23 @@ describe("run runtime", () => {
     expect(ui.appended).toEqual([{ kind: "user", text: "  hello  " }])
   })
 
+  test("records last turn duration", async () => {
+    const ui = createFooter()
+
+    await runPromptQueue({
+      footer: ui.footer,
+      initialInput: "one",
+      run: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        ui.close()
+      },
+    })
+
+    const duration = ui.patched.find((item) => typeof item.duration === "string")?.duration
+    expect(typeof duration).toBe("string")
+    expect(duration?.length ?? 0).toBeGreaterThan(0)
+  })
+
   test("propagates errors from prompt callbacks", async () => {
     const ui = createFooter()
     const queue = runPromptQueue({

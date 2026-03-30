@@ -1,6 +1,12 @@
 import path from "path"
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
+import { Locale } from "../../../util/locale"
 import type { FooterApi, RunFilePart, RunInput } from "./types"
+
+const money = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+})
 
 type TurnInput = {
   sdk: OpencodeClient
@@ -12,6 +18,7 @@ type TurnInput = {
   files: RunFilePart[]
   includeFiles: boolean
   thinking: boolean
+  limits: Record<string, number>
   footer: FooterApi
 }
 
@@ -132,6 +139,43 @@ export function formatUnknownError(error: unknown): string {
   return "unknown error"
 }
 
+function formatUsage(
+  tokens: {
+    input?: number
+    output?: number
+    reasoning?: number
+    cache?: {
+      read?: number
+      write?: number
+    }
+  },
+  limit: number | undefined,
+  cost: number | undefined,
+): string | undefined {
+  const total =
+    (tokens.input ?? 0) +
+    (tokens.output ?? 0) +
+    (tokens.reasoning ?? 0) +
+    (tokens.cache?.read ?? 0) +
+    (tokens.cache?.write ?? 0)
+
+  if (total <= 0) {
+    if (typeof cost === "number" && cost > 0) {
+      return money.format(cost)
+    }
+    return
+  }
+
+  const usage =
+    limit && limit > 0 ? `${Locale.number(total)} (${Math.round((total / limit) * 100)}%)` : Locale.number(total)
+
+  if (typeof cost === "number" && cost > 0) {
+    return `${usage} · ${money.format(cost)}`
+  }
+
+  return usage
+}
+
 export async function runPromptTurn(input: TurnInput): Promise<void> {
   const abort = new AbortController()
   const events = await input.sdk.event.subscribe(undefined, {
@@ -151,15 +195,39 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         if (
           event.type === "message.updated" &&
           event.properties.sessionID === input.sessionID &&
-          event.properties.info.role === "assistant" &&
-          !announcedAssistant
+          event.properties.info.role === "assistant"
         ) {
-          input.footer.append("system", `${event.properties.info.agent} · ${event.properties.info.modelID}`)
-          input.footer.patch({
-            phase: "running",
-            status: "assistant responding",
-          })
-          announcedAssistant = true
+          const info = event.properties.info as {
+            agent: string
+            modelID: string
+            providerID: string
+            tokens: {
+              input?: number
+              output?: number
+              reasoning?: number
+              cache?: {
+                read?: number
+                write?: number
+              }
+            }
+            cost?: number
+          }
+
+          if (!announcedAssistant) {
+            input.footer.append("system", `${info.agent} · ${info.modelID}`)
+            input.footer.patch({
+              phase: "running",
+              status: "assistant responding",
+            })
+            announcedAssistant = true
+          }
+
+          const usage = info.tokens
+            ? formatUsage(info.tokens, input.limits[`${info.providerID}/${info.modelID}`], info.cost)
+            : undefined
+          if (usage) {
+            input.footer.patch({ usage })
+          }
         }
 
         if (event.type === "message.part.updated") {

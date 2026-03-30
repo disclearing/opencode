@@ -1,14 +1,16 @@
 import { createCliRenderer, type CliRenderer } from "@opentui/core"
 import { TuiConfig } from "../../../config/tui"
+import { Locale } from "../../../util/locale"
 import { RunFooter } from "./footer"
 import { formatUnknownError, runPromptTurn } from "./stream"
 import type { FooterApi, FooterKeybinds, RunInput } from "./types"
 
-const FOOTER_HEIGHT = 7
+const FOOTER_HEIGHT = 6
 
 const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
   variantCycle: "ctrl+t,<leader>t",
+  interrupt: "escape",
   inputSubmit: "return",
   inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
 }
@@ -53,19 +55,60 @@ function cycleVariant(current: string | undefined, variants: string[]): string |
   return variants[index + 1]
 }
 
-async function resolveModelVariants(sdk: RunInput["sdk"], model: RunInput["model"]): Promise<string[]> {
-  if (!model) {
-    return []
-  }
+type ModelInfo = {
+  variants: string[]
+  limits: Record<string, number>
+}
 
+function modelKey(provider: string, model: string): string {
+  return `${provider}/${model}`
+}
+
+async function resolveModelInfo(sdk: RunInput["sdk"], model: RunInput["model"]): Promise<ModelInfo> {
   try {
     const response = await sdk.provider.list()
     const providers = response.data?.all ?? []
+    const limits: Record<string, number> = {}
+
+    for (const provider of providers) {
+      for (const [modelID, info] of Object.entries(provider.models ?? {})) {
+        const limit = info?.limit?.context
+        if (typeof limit === "number" && limit > 0) {
+          limits[modelKey(provider.id, modelID)] = limit
+        }
+      }
+    }
+
+    if (!model) {
+      return {
+        variants: [],
+        limits,
+      }
+    }
+
     const provider = providers.find((item) => item.id === model.providerID)
     const modelInfo = provider?.models?.[model.modelID]
-    return Object.keys(modelInfo?.variants ?? {})
+    return {
+      variants: Object.keys(modelInfo?.variants ?? {}),
+      limits,
+    }
   } catch {
-    return []
+    return {
+      variants: [],
+      limits: {},
+    }
+  }
+}
+
+async function resolveFirstPrompt(sdk: RunInput["sdk"], sessionID: string): Promise<boolean> {
+  try {
+    const response = await sdk.session.messages({
+      sessionID,
+      limit: 1,
+    })
+    return (response.data ?? []).length === 0
+  } catch {
+    return true
   }
 }
 
@@ -74,6 +117,7 @@ async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
     const config = await TuiConfig.get()
     const configuredLeader = config.keybinds?.leader?.trim() || DEFAULT_KEYBINDS.leader
     const configuredVariantCycle = config.keybinds?.variant_cycle?.trim() || "ctrl+t"
+    const configuredInterrupt = config.keybinds?.session_interrupt?.trim() || DEFAULT_KEYBINDS.interrupt
     const configuredSubmit = config.keybinds?.input_submit?.trim() || DEFAULT_KEYBINDS.inputSubmit
     const configuredNewline = config.keybinds?.input_newline?.trim() || DEFAULT_KEYBINDS.inputNewline
 
@@ -89,6 +133,7 @@ async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
     return {
       leader: configuredLeader,
       variantCycle: variantBindings.join(","),
+      interrupt: configuredInterrupt,
       inputSubmit: configuredSubmit,
       inputNewline: configuredNewline,
     }
@@ -170,7 +215,14 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           queue: q.length,
         })
         input.footer.append("user", prompt)
-        await input.run(prompt)
+        const start = Date.now()
+        try {
+          await input.run(prompt)
+        } finally {
+          input.footer.patch({
+            duration: Locale.duration(Math.max(0, Date.now() - start)),
+          })
+        }
       }
     } finally {
       run = false
@@ -191,6 +243,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
 
     q.push(prompt)
     input.footer.patch({ queue: q.length })
+    input.footer.patch({ first: false })
     void pump().catch(fail)
   }
 
@@ -225,11 +278,14 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
 }
 
 export async function runInteractiveMode(input: RunInput): Promise<void> {
-  const [keybinds, variants] = await Promise.all([
+  const [keybinds, info, first] = await Promise.all([
     resolveFooterKeybinds(),
-    resolveModelVariants(input.sdk, input.model),
+    resolveModelInfo(input.sdk, input.model),
+    resolveFirstPrompt(input.sdk, input.sessionID),
   ])
+  const variants = info.variants
   let activeVariant = input.variant
+  let aborting = false
 
   const renderer = await createCliRenderer({
     targetFps: 30,
@@ -252,6 +308,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
       model: input.model,
       variant: activeVariant,
     }),
+    first,
     keybinds,
     onCycleVariant: () => {
       if (!input.model || variants.length === 0) {
@@ -265,6 +322,21 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
         status: activeVariant ? `variant ${activeVariant}` : "variant default",
         modelLabel: formatModelLabel(input.model, activeVariant),
       }
+    },
+    onInterrupt: () => {
+      if (aborting) {
+        return
+      }
+
+      aborting = true
+      void input.sdk.session
+        .abort({
+          sessionID: input.sessionID,
+        })
+        .catch(() => {})
+        .finally(() => {
+          aborting = false
+        })
     },
   })
 
@@ -286,6 +358,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
             files: input.files,
             includeFiles,
             thinking: input.thinking,
+            limits: info.limits,
             footer,
           })
           includeFiles = false

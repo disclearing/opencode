@@ -2,13 +2,15 @@
 import type { KeyBinding } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
+import "opentui-spinner/solid"
 import { Keybind } from "../../../util/keybind"
+import { createColors, createFrames } from "../tui/ui/spinner"
 import type { FooterKeybinds, FooterState } from "./types"
 
 const HIGHLIGHT_COLOR = "#38bdf8"
 const MUTED_COLOR = "#64748b"
 const TEXT_COLOR = "#f8fafc"
-const BORDER_COLOR = "#334155"
+const SURFACE_COLOR = "#0f172a"
 
 const LEADER_TIMEOUT_MS = 2000
 
@@ -69,6 +71,7 @@ type RunFooterViewProps = {
   agent: string
   onSubmit: (text: string) => boolean
   onCycle: () => void
+  onInterrupt: () => boolean
   onExit: () => void
   onRows: (rows: number) => void
   onStatus: (text: string) => void
@@ -111,6 +114,8 @@ function printableBinding(binding: string, leader: string): string {
     text = text.replace("<leader>", Keybind.toString(lead))
   }
 
+  text = text.replace(/escape/g, "esc")
+
   return text
 }
 
@@ -146,16 +151,34 @@ export function RunFooterView(props: RunFooterViewProps) {
   const term = useTerminalDimensions()
   const leaders = createMemo(() => Keybind.parse(props.keybinds.leader))
   const cycles = createMemo(() => Keybind.parse(props.keybinds.variantCycle))
+  const interrupts = createMemo(() => Keybind.parse(props.keybinds.interrupt))
   const variant = createMemo(() => printableBinding(props.keybinds.variantCycle, props.keybinds.leader))
+  const interrupt = createMemo(() => printableBinding(props.keybinds.interrupt, props.keybinds.leader))
   const bindings = createMemo(() => textareaBindings(props.keybinds))
   const hints = createMemo(() => hintFlags(term().width))
   const busy = createMemo(() => props.state().phase === "running")
-  const status = createMemo(() => {
-    const state = props.state()
-    const base = state.status || `${props.agent} · ${state.model}`
-    const queued = state.queue > 0 ? ` · ${state.queue} queued` : ""
-    return `${base}${queued}`
-  })
+  const armed = createMemo(() => props.state().interrupt > 0)
+  const queue = createMemo(() => props.state().queue)
+  const duration = createMemo(() => props.state().duration)
+  const usage = createMemo(() => props.state().usage)
+  const interruptKey = createMemo(() => interrupt() || "/exit")
+  const spin = createMemo(() => ({
+    frames: createFrames({
+      color: HIGHLIGHT_COLOR,
+      style: "blocks",
+      inactiveFactor: 0.6,
+      minAlpha: 0.3,
+    }),
+    color: createColors({
+      color: HIGHLIGHT_COLOR,
+      style: "blocks",
+      inactiveFactor: 0.6,
+      minAlpha: 0.3,
+    }),
+  }))
+  const placeholder = createMemo(() =>
+    props.state().first ? 'Ask anything... "Fix a TODO in the codebase"' : "Ask anything...",
+  )
 
   const history: History = {
     items: [],
@@ -308,6 +331,13 @@ export function RunFooterView(props: RunFooterViewProps) {
       return
     }
 
+    if (match(interrupts(), toKeyInfo(event, false))) {
+      if (props.onInterrupt()) {
+        event.preventDefault()
+        return
+      }
+    }
+
     if (handleCycle(event)) {
       return
     }
@@ -422,39 +452,21 @@ export function RunFooterView(props: RunFooterViewProps) {
           paddingRight={2}
           paddingTop={1}
           flexDirection="column"
-          backgroundColor="transparent"
+          backgroundColor={SURFACE_COLOR}
           gap={0}
         >
-          <box id="run-direct-footer-status-row" width="100%" height={1} flexDirection="row" gap={1} flexShrink={0}>
-            <Show when={busy()}>
-              <text id="run-direct-footer-status-spinner" fg={HIGHLIGHT_COLOR} wrapMode="none" truncate>
-                [⋯]
-              </text>
-            </Show>
-            <text
-              id="run-direct-footer-status-text"
-              fg={busy() ? HIGHLIGHT_COLOR : MUTED_COLOR}
-              wrapMode="none"
-              truncate
-              flexGrow={1}
-              flexShrink={1}
-            >
-              {status()}
-            </text>
-          </box>
-
           <textarea
             id="run-direct-footer-composer"
             width="100%"
             minHeight={TEXTAREA_MIN_ROWS}
             maxHeight={TEXTAREA_MAX_ROWS}
             wrapMode="word"
-            placeholder={'Ask anything... "Fix a TODO in the codebase"'}
+            placeholder={placeholder()}
             placeholderColor={MUTED_COLOR}
             textColor={TEXT_COLOR}
             focusedTextColor={TEXT_COLOR}
-            backgroundColor="transparent"
-            focusedBackgroundColor="transparent"
+            backgroundColor={SURFACE_COLOR}
+            focusedBackgroundColor={SURFACE_COLOR}
             cursorColor={TEXT_COLOR}
             keyBindings={bindings()}
             onSubmit={onSubmit}
@@ -465,7 +477,7 @@ export function RunFooterView(props: RunFooterViewProps) {
             }}
           />
 
-          <box id="run-direct-footer-meta-row" width="100%" flexDirection="row" gap={1} paddingTop={1} flexShrink={0}>
+          <box id="run-direct-footer-meta-row" width="100%" flexDirection="row" gap={1} flexShrink={0} paddingTop={1}>
             <text id="run-direct-footer-agent" fg={HIGHLIGHT_COLOR} wrapMode="none" truncate flexShrink={0}>
               {props.agent}
             </text>
@@ -477,7 +489,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       </box>
 
       <box
-        id="run-direct-footer-separator-row"
+        id="run-direct-footer-line-6"
         width="100%"
         height={1}
         border={["left"]}
@@ -486,16 +498,17 @@ export function RunFooterView(props: RunFooterViewProps) {
           ...EMPTY_BORDER,
           vertical: "╹",
         }}
+        flexShrink={0}
       >
         <box
-          id="run-direct-footer-separator-line"
+          id="run-direct-footer-line-6-fill"
           width="100%"
           height={1}
           border={["bottom"]}
-          borderColor={BORDER_COLOR}
+          borderColor={SURFACE_COLOR}
           customBorderChars={{
             ...EMPTY_BORDER,
-            horizontal: "─",
+            horizontal: "▀",
           }}
         />
       </box>
@@ -503,52 +516,53 @@ export function RunFooterView(props: RunFooterViewProps) {
       <box
         id="run-direct-footer-row"
         width="100%"
+        height={1}
         flexDirection="row"
         justifyContent="space-between"
         gap={1}
         flexShrink={0}
       >
-        <Show when={props.state().queue > 0}>
-          <text id="run-direct-footer-queued" fg={MUTED_COLOR} wrapMode="none" truncate>
-            {props.state().queue} queued
-          </text>
+        <Show when={busy()}>
+          <box id="run-direct-footer-hint-left" flexDirection="row" gap={1} flexShrink={0}>
+            <box id="run-direct-footer-status-spinner" marginLeft={1} flexShrink={0}>
+              <spinner color={spin().color} frames={spin().frames} interval={40} />
+            </box>
+
+            <text
+              id="run-direct-footer-hint-interrupt"
+              fg={armed() ? HIGHLIGHT_COLOR : TEXT_COLOR}
+              wrapMode="none"
+              truncate
+            >
+              {interruptKey()}{" "}
+              <span style={{ fg: armed() ? HIGHLIGHT_COLOR : MUTED_COLOR }}>
+                {armed() ? "again to interrupt" : "interrupt"}
+              </span>
+            </text>
+          </box>
         </Show>
 
         <box id="run-direct-footer-spacer" flexGrow={1} flexShrink={1} backgroundColor="transparent" />
 
         <box id="run-direct-footer-hint-group" flexDirection="row" gap={2} flexShrink={0} justifyContent="flex-end">
-          <Show
-            when={busy()}
-            fallback={
-              <>
-                <Show when={hints().send}>
-                  <text id="run-direct-footer-hint-send" fg={TEXT_COLOR} wrapMode="none" truncate>
-                    Enter send
-                  </text>
-                </Show>
-                <Show when={hints().newline}>
-                  <text id="run-direct-footer-hint-newline" fg={MUTED_COLOR} wrapMode="none" truncate>
-                    Shift+Enter newline
-                  </text>
-                </Show>
-                <Show when={hints().history}>
-                  <text id="run-direct-footer-hint-history" fg={MUTED_COLOR} wrapMode="none" truncate>
-                    Up/Down history
-                  </text>
-                </Show>
-                <Show when={variant().length > 0 && hints().variant}>
-                  <text id="run-direct-footer-hint-variant" fg={MUTED_COLOR} wrapMode="none" truncate>
-                    {variant()} variant
-                  </text>
-                </Show>
-                <text id="run-direct-footer-hint-exit" fg={MUTED_COLOR} wrapMode="none" truncate>
-                  /exit
-                </text>
-              </>
-            }
-          >
-            <text id="run-direct-footer-hint-exit-running" fg={TEXT_COLOR} wrapMode="none" truncate>
-              /exit quit
+          <Show when={duration().length > 0}>
+            <text id="run-direct-footer-duration" fg={MUTED_COLOR} wrapMode="none" truncate>
+              {duration()}
+            </text>
+          </Show>
+          <Show when={queue() > 0}>
+            <text id="run-direct-footer-queue" fg={MUTED_COLOR} wrapMode="none" truncate>
+              {queue()} queued
+            </text>
+          </Show>
+          <Show when={usage().length > 0}>
+            <text id="run-direct-footer-usage" fg={MUTED_COLOR} wrapMode="none" truncate>
+              {usage()}
+            </text>
+          </Show>
+          <Show when={variant().length > 0 && hints().variant}>
+            <text id="run-direct-footer-hint-variant" fg={MUTED_COLOR} wrapMode="none" truncate>
+              {variant()} variant
             </text>
           </Show>
         </box>

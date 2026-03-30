@@ -29,6 +29,10 @@ export type FooterState = {
   status: string
   queue: number
   model: string
+  duration: string
+  usage: string
+  first: boolean
+  interrupt: number
 }
 
 export type FooterPatch = Partial<FooterState>
@@ -36,6 +40,7 @@ export type FooterPatch = Partial<FooterState>
 export type FooterKeybinds = {
   leader: string
   variantCycle: string
+  interrupt: string
   inputSubmit: string
   inputNewline: string
 }
