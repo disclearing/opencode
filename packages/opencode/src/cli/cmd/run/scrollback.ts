@@ -119,10 +119,46 @@ function build(kind: EntryKind, text: string, ctx: ScrollbackRenderContext, them
   }
 }
 
+function normalizeBlock(text: string): string {
+  return text.replace(/\r/g, "")
+}
+
+function buildBlock(text: string, ctx: ScrollbackRenderContext, theme: RunEntryTheme): ScrollbackSnapshot {
+  const body = normalizeBlock(text)
+  const width = Math.max(1, ctx.width)
+  const content = body.endsWith("\n") ? body : `${body}\n`
+  const root = new TextRenderable(ctx.renderContext, {
+    id: `run-direct-block-${id++}`,
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width,
+    height: 1,
+    content,
+    wrapMode: "word",
+    fg: theme.system.body,
+  })
+  const height = Math.max(1, root.scrollHeight)
+  root.height = height
+
+  return {
+    root,
+    width,
+    height,
+    rowColumns: width,
+    startOnNewLine: true,
+    trailingNewline: false,
+  }
+}
+
 export function entryWriter(
   kind: EntryKind,
   text: string,
   theme: RunEntryTheme = RUN_THEME_FALLBACK.entry,
 ): ScrollbackWriter {
   return (ctx) => build(kind, text, ctx, theme)
+}
+
+export function blockWriter(text: string, theme: RunEntryTheme = RUN_THEME_FALLBACK.entry): ScrollbackWriter {
+  return (ctx) => buildBlock(text, ctx, theme)
 }

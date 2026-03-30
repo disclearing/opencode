@@ -12,6 +12,8 @@ type PromptModel = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
 export type RunInput = {
   sdk: OpencodeClient
   sessionID: string
+  sessionTitle?: string
+  resume?: boolean
   agent: string | undefined
   model: PromptModel | undefined
   variant: string | undefined

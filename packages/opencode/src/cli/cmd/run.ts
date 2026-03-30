@@ -57,6 +57,11 @@ type Inline = {
   description?: string
 }
 
+type SessionInfo = {
+  id: string
+  title?: string
+}
+
 function inline(info: Inline) {
   const suffix = info.description ? UI.Style.TEXT_DIM + ` ${info.description}` + UI.Style.TEXT_NORMAL : ""
   UI.println(UI.Style.TEXT_NORMAL + info.icon, UI.Style.TEXT_NORMAL + info.title + suffix)
@@ -414,22 +419,78 @@ export const RunCommand = cmd({
       return message.slice(0, 50) + (message.length > 50 ? "..." : "")
     }
 
-    async function session(sdk: OpencodeClient) {
-      const baseID = args.continue ? (await sdk.session.list()).data?.find((s) => !s.parentID)?.id : args.session
+    async function session(sdk: OpencodeClient): Promise<SessionInfo | undefined> {
+      if (args.session) {
+        const current = await sdk.session
+          .get({
+            sessionID: args.session,
+          })
+          .catch(() => undefined)
 
-      if (baseID && args.fork) {
-        const forked = await sdk.session.fork({ sessionID: baseID })
-        return forked.data?.id
+        if (!current?.data) {
+          UI.error("Session not found")
+          process.exit(1)
+        }
+
+        if (args.fork) {
+          const forked = await sdk.session.fork({
+            sessionID: args.session,
+          })
+          const id = forked.data?.id
+          if (!id) {
+            return
+          }
+
+          return {
+            id,
+            title: forked.data?.title ?? current.data.title,
+          }
+        }
+
+        return {
+          id: current.data.id,
+          title: current.data.title,
+        }
       }
 
-      if (baseID) return baseID
+      const base = args.continue ? (await sdk.session.list()).data?.find((item) => !item.parentID) : undefined
+
+      if (base && args.fork) {
+        const forked = await sdk.session.fork({
+          sessionID: base.id,
+        })
+        const id = forked.data?.id
+        if (!id) {
+          return
+        }
+
+        return {
+          id,
+          title: forked.data?.title ?? base.title,
+        }
+      }
+
+      if (base) {
+        return {
+          id: base.id,
+          title: base.title,
+        }
+      }
 
       const name = title()
       const result = await sdk.session.create({
         title: name,
         permission: rules,
       })
-      return result.data?.id
+      const id = result.data?.id
+      if (!id) {
+        return
+      }
+
+      return {
+        id,
+        title: result.data?.title ?? name,
+      }
     }
 
     async function share(sdk: OpencodeClient, sessionID: string) {
@@ -664,11 +725,12 @@ export const RunCommand = cmd({
         return args.agent
       })()
 
-      const sessionID = await session(sdk)
-      if (!sessionID) {
+      const sess = await session(sdk)
+      if (!sess?.id) {
         UI.error("Session not found")
         process.exit(1)
       }
+      const sessionID = sess.id
       await share(sdk, sessionID)
 
       if (!args.interactive) {
@@ -705,6 +767,8 @@ export const RunCommand = cmd({
       await runInteractiveMode({
         sdk,
         sessionID,
+        sessionTitle: sess.title,
+        resume: Boolean(args.session) && !args.fork,
         agent,
         model,
         variant: args.variant,

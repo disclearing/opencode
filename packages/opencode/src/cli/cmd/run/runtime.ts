@@ -1,7 +1,8 @@
-import { createCliRenderer, type CliRenderer } from "@opentui/core"
+import { createCliRenderer, type CliRenderer, type ScrollbackWriter } from "@opentui/core"
 import { TuiConfig } from "../../../config/tui"
 import { Locale } from "../../../util/locale"
 import { RunFooter } from "./footer"
+import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { formatUnknownError, runPromptTurn } from "./stream"
 import { resolveRunTheme } from "./theme"
 import type { FooterApi, FooterKeybinds, RunInput } from "./types"
@@ -208,6 +209,32 @@ type QueueInput = {
   run: (prompt: string, signal: AbortSignal) => Promise<void>
 }
 
+type SplashState = {
+  entry: boolean
+  exit: boolean
+}
+
+/** @internal Exported for testing */
+export function queueSplash(
+  renderer: Pick<CliRenderer, "writeToScrollback" | "requestRender">,
+  state: SplashState,
+  phase: keyof SplashState,
+  write: ScrollbackWriter | undefined,
+): boolean {
+  if (state[phase]) {
+    return false
+  }
+
+  if (!write) {
+    return false
+  }
+
+  state[phase] = true
+  renderer.writeToScrollback(write)
+  renderer.requestRender()
+  return true
+}
+
 /** @internal Exported for testing */
 export async function runPromptQueue(input: QueueInput): Promise<void> {
   const q: string[] = []
@@ -349,6 +376,14 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     resolveFirstPrompt(input.sdk, input.sessionID),
     resolvePromptHistory(input.sdk, input.sessionID),
   ])
+  const meta = splashMeta({
+    title: input.sessionTitle,
+    session_id: input.sessionID,
+  })
+  const state: SplashState = {
+    entry: false,
+    exit: false,
+  }
   const variants = info.variants
   let activeVariant = input.variant
   let aborting = false
@@ -408,13 +443,6 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
           aborting = false
         })
     },
-    onExit: () => {
-      try {
-        shutdown(renderer)
-      } finally {
-        process.exit(0)
-      }
-    },
   })
   const sigint = () => {
     footer.requestExit()
@@ -422,7 +450,20 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
   process.on("SIGINT", sigint)
 
   try {
-    footer.append("system", "Interactive mode enabled. Type /exit or /quit to finish.")
+    if (!input.resume) {
+      queueSplash(
+        renderer,
+        state,
+        "entry",
+        entrySplash({
+          ...meta,
+          theme: theme.entry,
+          background: theme.background,
+        }),
+      )
+      await renderer.idle().catch(() => {})
+    }
+
     let includeFiles = true
     await runPromptQueue({
       footer,
@@ -454,6 +495,24 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     })
   } finally {
     process.off("SIGINT", sigint)
+
+    if (!renderer.isDestroyed) {
+      const hasMessages = !(await resolveFirstPrompt(input.sdk, input.sessionID))
+      if (hasMessages) {
+        queueSplash(
+          renderer,
+          state,
+          "exit",
+          exitSplash({
+            ...meta,
+            theme: theme.entry,
+            background: theme.background,
+          }),
+        )
+        await renderer.idle().catch(() => {})
+      }
+    }
+
     footer.close()
     footer.destroy()
     shutdown(renderer)

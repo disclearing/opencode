@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { runPromptQueue } from "../../../src/cli/cmd/run/runtime"
+import { queueSplash, runPromptQueue } from "../../../src/cli/cmd/run/runtime"
 import type { EntryKind, FooterApi, FooterPatch } from "../../../src/cli/cmd/run/types"
 
 function createFooter() {
@@ -75,6 +75,34 @@ function createFooter() {
 }
 
 describe("run runtime", () => {
+  test("queues entry and exit splash only once", () => {
+    const writes: unknown[] = []
+    let renders = 0
+    const renderer = {
+      writeToScrollback(write: unknown) {
+        writes.push(write)
+      },
+      requestRender() {
+        renders += 1
+      },
+    } as any
+
+    const state = {
+      entry: false,
+      exit: false,
+    }
+
+    const write = () => ({}) as any
+
+    expect(queueSplash(renderer, state, "entry", write)).toBe(true)
+    expect(queueSplash(renderer, state, "entry", write)).toBe(false)
+    expect(queueSplash(renderer, state, "exit", write)).toBe(true)
+    expect(queueSplash(renderer, state, "exit", write)).toBe(false)
+
+    expect(writes).toHaveLength(2)
+    expect(renders).toBe(2)
+  })
+
   test("returns immediately when footer is already closed", async () => {
     const ui = createFooter()
     let calls = 0

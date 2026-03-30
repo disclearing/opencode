@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { TextAttributes } from "@opentui/core"
 import { testRender } from "@opentui/solid"
-import { entryWriter, normalizeEntry } from "../../../src/cli/cmd/run/scrollback"
+import { blockWriter, entryWriter, normalizeEntry } from "../../../src/cli/cmd/run/scrollback"
 import { RUN_THEME_FALLBACK } from "../../../src/cli/cmd/run/theme"
 import type { EntryKind } from "../../../src/cli/cmd/run/types"
 
@@ -14,6 +14,34 @@ async function draw(kind: EntryKind, text: string) {
   try {
     const snap = entryWriter(
       kind,
+      text,
+      RUN_THEME_FALLBACK.entry,
+    )({
+      width: 80,
+      widthMethod: setup.renderer.widthMethod,
+      renderContext: (setup.renderer.root as any)._ctx,
+    })
+    const root = snap.root as any
+    return {
+      snap,
+      root,
+      text: root.plainText as string,
+      fg: root.fg,
+      attrs: root.attributes ?? 0,
+    }
+  } finally {
+    setup.renderer.destroy()
+  }
+}
+
+async function drawBlock(text: string) {
+  const setup = await testRender(() => null, {
+    width: 80,
+    height: 12,
+  })
+
+  try {
+    const snap = blockWriter(
       text,
       RUN_THEME_FALLBACK.entry,
     )({
@@ -109,5 +137,22 @@ describe("run scrollback", () => {
 
     expect(same(error.fg, RUN_THEME_FALLBACK.entry.error.body)).toBe(true)
     expect(Boolean(error.attrs & TextAttributes.BOLD)).toBe(true)
+  })
+
+  test("preserves multiline blocks with intentional spacing", async () => {
+    const text = "+-------+\n| splash |\n+-------+\n\nSession   Demo"
+    const out = await drawBlock(text)
+
+    expect(out.text).toBe(`${text}\n`)
+    expect(out.snap.width).toBe(80)
+    expect(out.snap.rowColumns).toBe(80)
+    expect(out.snap.startOnNewLine).toBe(true)
+    expect(out.snap.trailingNewline).toBe(false)
+  })
+
+  test("keeps interior whitespace in preformatted blocks", async () => {
+    const out = await drawBlock("Session   title\nContinue  opencode -s abc")
+    expect(out.text).toContain("Session   title")
+    expect(out.text).toContain("Continue  opencode -s abc")
   })
 })
