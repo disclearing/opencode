@@ -194,6 +194,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
+    if (event.properties.field !== "text") {
+      return out(data, commits)
+    }
+
+    if (data.ids.has(event.properties.partID)) {
+      return out(data, commits)
+    }
+
     const key = deltaKey(event.properties.partID, event.properties.field)
     data.delta.set(key, `${data.delta.get(key) ?? ""}${event.properties.delta}`)
     return out(data, commits)
@@ -270,7 +278,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     if (part.type === "reasoning") {
-      if (!part.time?.end || !input.thinking) {
+      if (!part.time?.end) {
         return out(data, commits)
       }
 
@@ -280,13 +288,13 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
       data.ids.add(part.id)
       const text = mergeDelta(data, part.id, part.text).trim()
-      if (!text) {
+      if (!input.thinking || !text) {
         return out(data, commits)
       }
 
       commits.push({
-        kind: "system",
-        text: `Thinking: ${text}`,
+        kind: "reasoning",
+        text,
       })
       return out(data, commits)
     }

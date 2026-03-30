@@ -3,7 +3,7 @@ import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { Keybind } from "../../../util/keybind"
 import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
-import { entryWriter } from "./scrollback"
+import { entryWriter, normalizeEntry } from "./scrollback"
 import type { RunTheme } from "./theme"
 import type { EntryKind, FooterApi, FooterKeybinds, FooterPatch, FooterState } from "./types"
 
@@ -141,11 +141,11 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    if (!text.trim()) {
+    if (!normalizeEntry(kind, text).trim()) {
       return
     }
 
-    this.renderer.writeToScrollback(entryWriter(kind, text, new Date(), this.options.theme.entry))
+    this.renderer.writeToScrollback(entryWriter(kind, text, this.options.theme.entry))
     this.scheduleSettleRender()
   }
 

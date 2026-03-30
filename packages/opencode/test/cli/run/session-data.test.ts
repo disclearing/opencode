@@ -108,6 +108,53 @@ describe("session data reducer", () => {
     expect(out.commits).toEqual([{ kind: "assistant", text: "hello" }])
   })
 
+  test("ignores non-text deltas", () => {
+    const out = reduce(createSessionData(), {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "msg-1",
+        partID: "txt-1",
+        field: "input",
+        delta: "ignored",
+      },
+    })
+
+    expect(out.commits).toEqual([])
+    expect(out.data.delta.size).toBe(0)
+  })
+
+  test("ignores stale deltas after part finalized", () => {
+    let data = createSessionData()
+
+    data = reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "txt-1",
+          sessionID: "session-1",
+          type: "text",
+          text: "done",
+          time: { end: Date.now() },
+        },
+      },
+    }).data
+
+    const out = reduce(data, {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "msg-1",
+        partID: "txt-1",
+        field: "text",
+        delta: "late",
+      },
+    })
+
+    expect(out.commits).toEqual([])
+    expect(out.data.delta.size).toBe(0)
+  })
+
   test("tool running then completed success stays status-only", () => {
     let data = createSessionData()
 
@@ -248,6 +295,60 @@ describe("session data reducer", () => {
     data = first.data
     const next = reduce(data, evt)
     expect(next.commits).toEqual([])
+  })
+
+  test("reasoning commits as reasoning kind", () => {
+    const out = reduce(
+      createSessionData(),
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "reason-1",
+            sessionID: "session-1",
+            type: "reasoning",
+            text: "step",
+            time: { start: 1, end: 2 },
+          },
+        },
+      },
+      true,
+    )
+
+    expect(out.commits).toEqual([{ kind: "reasoning", text: "step" }])
+  })
+
+  test("thinking disabled clears finalized reasoning delta", () => {
+    let data = createSessionData()
+
+    data = reduce(data, {
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "msg-1",
+        partID: "reason-1",
+        field: "text",
+        delta: "hidden",
+      },
+    }).data
+
+    expect(data.delta.size).toBe(1)
+
+    const out = reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "reason-1",
+          sessionID: "session-1",
+          type: "reasoning",
+          text: "",
+          time: { start: 1, end: 2 },
+        },
+      },
+    })
+
+    expect(out.commits).toEqual([])
+    expect(out.data.delta.size).toBe(0)
   })
 
   test("permission asked updates status only", () => {

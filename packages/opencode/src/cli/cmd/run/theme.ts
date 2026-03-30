@@ -2,8 +2,6 @@ import { RGBA, type CliRenderer, type ColorInput } from "@opentui/core"
 import type { EntryKind } from "./types"
 
 type Tone = {
-  border: ColorInput
-  heading: ColorInput
   body: ColorInput
 }
 
@@ -26,9 +24,7 @@ export type RunTheme = {
 type Resolved = {
   background: RGBA
   backgroundElement: RGBA
-  borderSubtle: RGBA
   primary: RGBA
-  secondary: RGBA
   warning: RGBA
   error: RGBA
   text: RGBA
@@ -74,29 +70,22 @@ function map(theme: Resolved): RunTheme {
     },
     entry: {
       system: {
-        border: theme.borderSubtle,
-        heading: theme.textMuted,
-        body: theme.text,
+        body: theme.textMuted,
       },
       user: {
-        border: theme.primary,
-        heading: theme.primary,
-        body: theme.text,
+        body: theme.primary,
       },
       assistant: {
-        border: theme.secondary,
-        heading: theme.secondary,
         body: theme.text,
+      },
+      reasoning: {
+        body: theme.textMuted,
       },
       tool: {
-        border: theme.warning,
-        heading: theme.warning,
-        body: theme.text,
+        body: theme.warning,
       },
       error: {
-        border: theme.error,
-        heading: theme.error,
-        body: theme.text,
+        body: theme.error,
       },
     },
   }
@@ -104,7 +93,6 @@ function map(theme: Resolved): RunTheme {
 
 const seed = {
   highlight: rgba("#38bdf8"),
-  accent: rgba("#22d3ee"),
   muted: rgba("#64748b"),
   text: rgba("#f8fafc"),
   panel: rgba("#0f172a"),
@@ -112,11 +100,9 @@ const seed = {
   error: rgba("#ef4444"),
 }
 
-function tone(border: ColorInput, heading: ColorInput = border): Tone {
+function tone(body: ColorInput): Tone {
   return {
-    border,
-    heading,
-    body: seed.text,
+    body,
   }
 }
 
@@ -132,7 +118,8 @@ export const RUN_THEME_FALLBACK: RunTheme = {
   entry: {
     system: tone(seed.muted),
     user: tone(seed.highlight),
-    assistant: tone(seed.accent),
+    assistant: tone(seed.text),
+    reasoning: tone(seed.muted),
     tool: tone(seed.warning),
     error: tone(seed.error),
   },

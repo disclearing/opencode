@@ -20,7 +20,7 @@ export type RunInput = {
   thinking: boolean
 }
 
-export type EntryKind = "system" | "user" | "assistant" | "tool" | "error"
+export type EntryKind = "system" | "user" | "assistant" | "reasoning" | "tool" | "error"
 
 export type FooterPhase = "idle" | "running"
 
