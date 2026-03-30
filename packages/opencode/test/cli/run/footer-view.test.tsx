@@ -67,6 +67,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -120,6 +122,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -165,12 +169,14 @@ describe("run footer view", () => {
     expect(area.plainText).toBe("one")
     expect(area.cursorOffset).toBe(0)
 
-    area.cursorOffset = area.plainText.length
+    setup.mockInput.pressArrow("down")
+    expect(area.plainText).toBe("one")
+    expect(area.cursorOffset).toBe(area.plainText.length)
+
     setup.mockInput.pressArrow("down")
     expect(area.plainText).toBe("two")
     expect(area.cursorOffset).toBe(area.plainText.length)
 
-    area.cursorOffset = area.plainText.length
     setup.mockInput.pressArrow("down")
     expect(area.plainText).toBe("")
     expect(area.cursorOffset).toBe(0)
@@ -239,6 +245,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -290,6 +298,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -344,6 +354,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -388,6 +400,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}
@@ -430,6 +444,8 @@ describe("run footer view", () => {
             leader: "ctrl+x",
             variantCycle: "ctrl+t,<leader>t",
             interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
             inputSubmit: "return",
             inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
           }}

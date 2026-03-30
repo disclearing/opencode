@@ -47,6 +47,9 @@ type History = {
 type Area = {
   isDestroyed: boolean
   virtualLineCount: number
+  visualCursor: {
+    visualRow: number
+  }
   plainText: string
   cursorOffset: number
   setText(text: string): void
@@ -152,6 +155,8 @@ export function RunFooterView(props: RunFooterViewProps) {
   const leaders = createMemo(() => Keybind.parse(props.keybinds.leader))
   const cycles = createMemo(() => Keybind.parse(props.keybinds.variantCycle))
   const interrupts = createMemo(() => Keybind.parse(props.keybinds.interrupt))
+  const historyPrevious = createMemo(() => Keybind.parse(props.keybinds.historyPrevious))
+  const historyNext = createMemo(() => Keybind.parse(props.keybinds.historyNext))
   const variant = createMemo(() => printableBinding(props.keybinds.variantCycle, props.keybinds.leader))
   const interrupt = createMemo(() => printableBinding(props.keybinds.interrupt, props.keybinds.leader))
   const bindings = createMemo(() => textareaBindings(props.keybinds))
@@ -342,17 +347,30 @@ export function RunFooterView(props: RunFooterViewProps) {
       return
     }
 
-    if (event.ctrl || event.meta || event.shift || event.super || event.hyper) {
+    const key = toKeyInfo(event, false)
+    const previous = match(historyPrevious(), key)
+    const next = match(historyNext(), key)
+
+    if (!previous && !next) {
       return
     }
 
-    if (event.name === "up") {
-      move(-1, event)
+    if (!area || area.isDestroyed) {
       return
     }
 
-    if (event.name === "down") {
-      move(1, event)
+    const dir = previous ? -1 : 1
+    if ((dir === -1 && area.cursorOffset === 0) || (dir === 1 && area.cursorOffset === area.plainText.length)) {
+      move(dir, event)
+      return
+    }
+
+    if (dir === -1 && area.visualCursor.visualRow === 0) {
+      area.cursorOffset = 0
+    }
+
+    if (dir === 1 && area.visualCursor.visualRow === area.virtualLineCount - 1) {
+      area.cursorOffset = area.plainText.length
     }
   }
 

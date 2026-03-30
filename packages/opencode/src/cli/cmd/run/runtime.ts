@@ -11,6 +11,8 @@ const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
   variantCycle: "ctrl+t,<leader>t",
   interrupt: "escape",
+  historyPrevious: "up",
+  historyNext: "down",
   inputSubmit: "return",
   inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
 }
@@ -118,6 +120,8 @@ async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
     const configuredLeader = config.keybinds?.leader?.trim() || DEFAULT_KEYBINDS.leader
     const configuredVariantCycle = config.keybinds?.variant_cycle?.trim() || "ctrl+t"
     const configuredInterrupt = config.keybinds?.session_interrupt?.trim() || DEFAULT_KEYBINDS.interrupt
+    const configuredHistoryPrevious = config.keybinds?.history_previous?.trim() || DEFAULT_KEYBINDS.historyPrevious
+    const configuredHistoryNext = config.keybinds?.history_next?.trim() || DEFAULT_KEYBINDS.historyNext
     const configuredSubmit = config.keybinds?.input_submit?.trim() || DEFAULT_KEYBINDS.inputSubmit
     const configuredNewline = config.keybinds?.input_newline?.trim() || DEFAULT_KEYBINDS.inputNewline
 
@@ -134,6 +138,8 @@ async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
       leader: configuredLeader,
       variantCycle: variantBindings.join(","),
       interrupt: configuredInterrupt,
+      historyPrevious: configuredHistoryPrevious,
+      historyNext: configuredHistoryNext,
       inputSubmit: configuredSubmit,
       inputNewline: configuredNewline,
     }
