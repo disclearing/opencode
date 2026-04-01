@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/solid */
-import type { KeyBinding } from "@opentui/core"
+import { StyledText, bg, fg, type KeyBinding } from "@opentui/core"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import "opentui-spinner/solid"
@@ -168,21 +168,28 @@ export function RunFooterView(props: RunFooterViewProps) {
   const usage = createMemo(() => props.state().usage)
   const interruptKey = createMemo(() => interrupt() || "/exit")
   const theme = createMemo(() => props.theme ?? RUN_THEME_FALLBACK.footer)
-  const spin = createMemo(() => ({
-    frames: createFrames({
-      color: theme().highlight,
-      style: "blocks",
-      inactiveFactor: 0.6,
-      minAlpha: 0.3,
-    }),
-    color: createColors({
-      color: theme().highlight,
-      style: "blocks",
-      inactiveFactor: 0.6,
-      minAlpha: 0.3,
-    }),
-  }))
-  const placeholder = createMemo(() => (props.state().first ? 'Ask anything... "Fix a TODO in the codebase"' : ""))
+  const spin = createMemo(() => {
+    const list = [theme().highlight, theme().text, theme().muted]
+    return {
+      frames: createFrames({
+        colors: list,
+        style: "blocks",
+      }),
+      color: createColors({
+        colors: list,
+        defaultColor: theme().muted,
+        style: "blocks",
+        enableFading: false,
+      }),
+    }
+  })
+  const placeholder = createMemo(() => {
+    if (!props.state().first) {
+      return ""
+    }
+
+    return new StyledText([bg(theme().surface)(fg(theme().muted)('Ask anything... "Fix a TODO in the codebase"'))])
+  })
 
   const history: History = {
     items: (props.history ?? [])
