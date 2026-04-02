@@ -29,9 +29,9 @@ export class RunFooter implements FooterApi {
   private destroyed = false
   private prompts = new Set<(text: string) => void>()
   private closes = new Set<() => void>()
+  private seen = new Set<string>()
   private queue: StreamCommit[] = []
   private pending = false
-  private tail = true
   private base: number
   private rows = TEXTAREA_MIN_ROWS
   private state: Accessor<FooterState>
@@ -139,21 +139,6 @@ export class RunFooter implements FooterApi {
 
     if (prev.phase === "running" && state.phase === "idle") {
       this.flush()
-      if (!this.tail) {
-        this.renderer.writeToScrollback(
-          entryWriter(
-            {
-              kind: "assistant",
-              text: "",
-              phase: "final",
-              source: "assistant",
-              gap: true,
-            },
-            this.options.theme.entry,
-          ),
-        )
-        this.tail = true
-      }
     }
   }
 
@@ -226,6 +211,7 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
+    this.seen.clear()
   }
 
   private notifyClose(): void {
@@ -416,6 +402,7 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
+    this.seen.clear()
   }
 
   private flush(): void {
@@ -424,25 +411,37 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    for (const commit of this.queue.splice(0)) {
-      this.renderer.writeToScrollback(entryWriter(commit, this.options.theme.entry))
-      this.tail = this.endsWithNewline(commit)
-    }
-  }
+    for (const item of this.queue.splice(0)) {
+      if (
+        item.phase !== "progress" ||
+        (item.kind !== "assistant" && item.kind !== "reasoning") ||
+        typeof item.partID !== "string" ||
+        item.partID.length === 0
+      ) {
+        this.renderer.writeToScrollback(entryWriter(item, this.options.theme.entry))
+        continue
+      }
 
-  private endsWithNewline(commit: StreamCommit): boolean {
-    if (commit.gap) {
-      return true
-    }
+      const part = item.partID
+      const first = !this.seen.has(part)
+      this.seen.add(part)
 
-    if (commit.kind === "user") {
-      return true
-    }
+      if (!first) {
+        this.renderer.writeToScrollback(entryWriter(item, this.options.theme.entry))
+        continue
+      }
 
-    if (commit.phase === "start" || commit.phase === "final") {
-      return true
+      this.renderer.writeToScrollback(
+        entryWriter(
+          {
+            ...item,
+            text: "",
+            gap: true,
+          },
+          this.options.theme.entry,
+        ),
+      )
+      this.renderer.writeToScrollback(entryWriter(item, this.options.theme.entry))
     }
-
-    return commit.text.endsWith("\n")
   }
 }

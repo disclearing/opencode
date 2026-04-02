@@ -476,6 +476,8 @@ export function RunFooterView(props: RunFooterViewProps) {
       gap={0}
       padding={0}
     >
+      <box id="run-direct-footer-top-spacer" width="100%" height={1} flexShrink={0} backgroundColor="transparent" />
+
       <box
         id="run-direct-footer-composer-frame"
         width="100%"

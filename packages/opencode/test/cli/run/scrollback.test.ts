@@ -136,7 +136,7 @@ describe("run scrollback", () => {
     expect(out.snap.width).toBe(9)
     expect(out.snap.rowColumns).toBe(9)
     expect(out.snap.startOnNewLine).toBe(true)
-    expect(out.snap.trailingNewline).toBe(true)
+    expect(out.snap.trailingNewline).toBe(false)
   })
 
   test("renders spaced user follow-up prompt", () => {

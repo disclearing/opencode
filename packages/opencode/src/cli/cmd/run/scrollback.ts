@@ -557,7 +557,7 @@ function build(commit: StreamCommit, ctx: ScrollbackRenderContext, theme: RunEnt
   const gap = commit.gap === true
 
   const startOnNewLine = gap ? false : commit.phase === "start" || commit.phase === "final" || commit.kind === "user"
-  const trailingNewline = gap ? true : commit.phase === "start" || commit.phase === "final" || commit.kind === "user"
+  const trailingNewline = gap ? true : (commit.phase === "start" || commit.phase === "final") && commit.kind !== "user"
 
   const root = new TextRenderable(ctx.renderContext, {
     id: `run-direct-entry-${id++}`,

@@ -11,7 +11,7 @@ import { formatUnknownError, runPromptTurn } from "./stream"
 import { resolveRunTheme } from "./theme"
 import type { FooterApi, FooterKeybinds, RunInput } from "./types"
 
-const FOOTER_HEIGHT = 6
+const FOOTER_HEIGHT = 7
 const HISTORY_LIMIT = 200
 const MODEL_FILE = path.join(Global.Path.state, "model.json")
 const DEFAULT_TITLE = /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/

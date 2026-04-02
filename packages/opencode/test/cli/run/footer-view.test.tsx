@@ -356,7 +356,7 @@ describe("run footer view", () => {
     })
   })
 
-  test("baseline scaffold follows 6-line layout", async () => {
+  test("baseline scaffold follows 7-line layout", async () => {
     const [state] = createSignal<FooterState>({
       phase: "idle",
       status: "",
@@ -400,17 +400,18 @@ describe("run footer view", () => {
     await setup.renderOnce()
     const lines = setup.captureCharFrame().split("\n")
 
-    expect(lines[0]).toMatch(/^┃\s*$/)
-    expect(lines[1]?.startsWith("┃")).toBe(true)
-    expect(lines[1]).toContain('Ask anything... "Fix a TODO in the codebase"')
-    expect(lines[2]).toMatch(/^┃\s*$/)
-    expect(lines[3]?.startsWith("┃")).toBe(true)
-    expect(lines[3]).toContain("Build")
-    expect(lines[4]).toMatch(/^╹▀+$/)
-    expect(lines[5]).not.toContain("interrupt")
-    expect(lines[5]).toContain("▣  · 1m 18s")
-    expect(lines[5]).toContain("167.8K (42%)")
-    expect(lines[5]).toContain("ctrl+t variant")
+    expect(lines[0]).toMatch(/^\s*$/)
+    expect(lines[1]).toMatch(/^┃\s*$/)
+    expect(lines[2]?.startsWith("┃")).toBe(true)
+    expect(lines[2]).toContain('Ask anything... "Fix a TODO in the codebase"')
+    expect(lines[3]).toMatch(/^┃\s*$/)
+    expect(lines[4]?.startsWith("┃")).toBe(true)
+    expect(lines[4]).toContain("Build")
+    expect(lines[5]).toMatch(/^╹▀+$/)
+    expect(lines[6]).not.toContain("interrupt")
+    expect(lines[6]).toContain("▣  · 1m 18s")
+    expect(lines[6]).toContain("167.8K (42%)")
+    expect(lines[6]).toContain("ctrl+t variant")
   })
 
   test("renders usage and duration fields", async () => {
