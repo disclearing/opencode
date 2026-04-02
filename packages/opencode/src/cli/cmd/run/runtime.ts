@@ -1,5 +1,6 @@
 import path from "path"
 import { createCliRenderer, type CliRenderer, type ScrollbackWriter } from "@opentui/core"
+import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { TuiConfig } from "../../../config/tui"
 import { Global } from "../../../global"
 import { Filesystem } from "../../../util/filesystem"
@@ -13,6 +14,7 @@ import type { FooterApi, FooterKeybinds, RunInput } from "./types"
 const FOOTER_HEIGHT = 6
 const HISTORY_LIMIT = 200
 const MODEL_FILE = path.join(Global.Path.state, "model.json")
+const DEFAULT_TITLE = /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 
 const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
@@ -69,7 +71,13 @@ type ModelInfo = {
   limits: Record<string, number>
 }
 
-type SessionMessages = Awaited<ReturnType<RunInput["sdk"]["session"]["messages"]>>["data"]
+type SessionInfo = {
+  first: boolean
+  history: string[]
+  variant: string | undefined
+}
+
+type SessionMessages = NonNullable<Awaited<ReturnType<RunInput["sdk"]["session"]["messages"]>>["data"]>
 
 type ModelState = {
   variant?: Record<string, string | undefined>
@@ -131,37 +139,28 @@ async function resolveFirstPrompt(sdk: RunInput["sdk"], sessionID: string): Prom
   }
 }
 
-async function resolvePromptHistory(sdk: RunInput["sdk"], sessionID: string): Promise<string[]> {
-  try {
-    const response = await sdk.session.messages({
-      sessionID,
-      limit: HISTORY_LIMIT,
-    })
-    const messages = response.data ?? []
-    const history: string[] = []
+function promptHistory(messages: SessionMessages): string[] {
+  const history: string[] = []
 
-    for (const message of messages) {
-      if (message.info.role !== "user") {
-        continue
-      }
-
-      const text = message.parts
-        .filter((part) => part.type === "text")
-        .map((part) => part.text.trim())
-        .filter((part) => part.length > 0)
-        .join("\n")
-
-      if (!text || history[history.length - 1] === text) {
-        continue
-      }
-
-      history.push(text)
+  for (const message of messages) {
+    if (message.info.role !== "user") {
+      continue
     }
 
-    return history.slice(-HISTORY_LIMIT)
-  } catch {
-    return []
+    const text = message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text.trim())
+      .filter((part) => part.length > 0)
+      .join("\n")
+
+    if (!text || history[history.length - 1] === text) {
+      continue
+    }
+
+    history.push(text)
   }
+
+  return history.slice(-HISTORY_LIMIT)
 }
 
 /** @internal Exported for testing */
@@ -218,24 +217,28 @@ export function resolveVariant(
   return fallback
 }
 
-async function resolveStoredVariant(
+async function resolveSessionInfo(
   sdk: RunInput["sdk"],
   sessionID: string,
   model: RunInput["model"],
-): Promise<string | undefined> {
-  if (!model) {
-    return undefined
-  }
-
+): Promise<SessionInfo> {
   try {
     const response = await sdk.session.messages({
       sessionID,
       limit: HISTORY_LIMIT,
     })
-
-    return pickVariant(model, response.data)
+    const messages = response.data ?? []
+    return {
+      first: messages.length === 0,
+      history: promptHistory(messages),
+      variant: pickVariant(model, messages),
+    }
   } catch {
-    return undefined
+    return {
+      first: true,
+      history: [],
+      variant: undefined,
+    }
   }
 }
 
@@ -363,6 +366,20 @@ export function queueSplash(
   return true
 }
 
+function isExitPrompt(text: string): boolean {
+  const value = text.trim().toLowerCase()
+  return value === "/exit" || value === "/quit"
+}
+
+function splashTitle(title: string | undefined, history: string[]): string | undefined {
+  if (title && !DEFAULT_TITLE.test(title)) {
+    return title
+  }
+
+  const next = history.find((item) => item.trim().length > 0)
+  return next ?? title
+}
+
 /** @internal Exported for testing */
 export async function runPromptQueue(input: QueueInput): Promise<void> {
   const q: string[] = []
@@ -459,6 +476,11 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       return
     }
 
+    if (isExitPrompt(prompt)) {
+      input.footer.close()
+      return
+    }
+
     q.push(prompt)
     input.footer.patch({ queue: q.length })
     input.footer.patch({ first: false })
@@ -497,26 +519,75 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   }
 }
 
-export async function runInteractiveMode(input: RunInput): Promise<void> {
-  const [keybinds, info, first, history, storedVariant, savedVariant] = await Promise.all([
-    resolveFooterKeybinds(),
-    resolveModelInfo(input.sdk, input.model),
-    resolveFirstPrompt(input.sdk, input.sessionID),
-    resolvePromptHistory(input.sdk, input.sessionID),
-    resolveStoredVariant(input.sdk, input.sessionID, input.model),
-    resolveSavedVariant(input.model),
-  ])
-  const meta = splashMeta({
-    title: input.sessionTitle,
-    session_id: input.sessionID,
+type BootContext = Pick<RunInput, "sdk" | "sessionID" | "sessionTitle" | "resume" | "agent" | "model" | "variant">
+
+type RunBootInput = {
+  boot: () => Promise<BootContext>
+  afterPaint?: (ctx: BootContext) => Promise<void> | void
+  agent: RunInput["agent"]
+  model: RunInput["model"]
+  variant: RunInput["variant"]
+  files: RunInput["files"]
+  initialInput?: string
+  thinking: boolean
+}
+
+type RunLocalInput = {
+  fetch: typeof globalThis.fetch
+  resolveAgent: () => Promise<string | undefined>
+  session: (sdk: RunInput["sdk"]) => Promise<{ id: string; title?: string } | undefined>
+  share: (sdk: RunInput["sdk"], sessionID: string) => Promise<void>
+  agent: RunInput["agent"]
+  model: RunInput["model"]
+  variant: RunInput["variant"]
+  files: RunInput["files"]
+  initialInput?: string
+  thinking: boolean
+}
+
+function waitReady<T>(task: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
+  if (signal.aborted) {
+    return Promise.resolve(undefined)
+  }
+
+  return new Promise<T | undefined>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort)
+      resolve(undefined)
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true })
+    void task.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(error)
+      },
+    )
   })
+}
+
+export async function runInteractiveBootMode(input: RunBootInput): Promise<void> {
+  const keybindsTask = resolveFooterKeybinds()
+  const ready = input.boot()
+  const seeded = Boolean(input.initialInput?.trim())
   const state: SplashState = {
     entry: false,
     exit: false,
   }
-  const variants = info.variants
-  let activeVariant = resolveVariant(input.variant, storedVariant, savedVariant, variants)
+  let meta: ReturnType<typeof splashMeta> | undefined
+  let first = true
+  let sessionVariant: string | undefined
+  let savedVariant: string | undefined
+  let variants: string[] = []
+  let limits: Record<string, number> = {}
+  let activeVariant = input.variant
   let aborting = false
+  let ctx: BootContext | undefined
+  let modelTask: Promise<void> | undefined
 
   const renderer = await createCliRenderer({
     targetFps: 30,
@@ -534,6 +605,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
   })
   const theme = await resolveRunTheme(renderer)
   renderer.setBackgroundColor(theme.background)
+  const keybinds = await keybindsTask
 
   const footer = new RunFooter(renderer, {
     ...footerLabels({
@@ -542,7 +614,295 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
       variant: activeVariant,
     }),
     first,
-    history,
+    history: [],
+    theme,
+    keybinds,
+    onCycleVariant: () => {
+      const model = ctx?.model ?? input.model
+      if (!model || variants.length === 0) {
+        if (ctx) {
+          loadModel(ctx)
+          return {
+            status: "loading variants",
+          }
+        }
+
+        return {
+          status: "no variants available",
+        }
+      }
+
+      activeVariant = cycleVariant(activeVariant, variants)
+      saveVariant(model, activeVariant)
+      return {
+        status: activeVariant ? `variant ${activeVariant}` : "variant default",
+        modelLabel: formatModelLabel(model, activeVariant),
+      }
+    },
+    onInterrupt: () => {
+      if (!ctx) {
+        footer.patch({ status: "starting backend" })
+        return
+      }
+
+      if (aborting) {
+        return
+      }
+
+      aborting = true
+      void ctx.sdk.session
+        .abort({
+          sessionID: ctx.sessionID,
+        })
+        .catch(() => {})
+        .finally(() => {
+          aborting = false
+        })
+    },
+  })
+  footer.patch({ status: "starting backend" })
+  queueSplash(
+    renderer,
+    state,
+    "entry",
+    entrySplash({
+      title: "",
+      session_id: "",
+      theme: theme.entry,
+      background: theme.background,
+      showSession: false,
+    }),
+  )
+
+  const loadModel = (next: BootContext) => {
+    if (modelTask) {
+      return
+    }
+
+    modelTask = resolveModelInfo(next.sdk, next.model)
+      .then((info) => {
+        variants = info.variants
+        limits = info.limits
+        const variant = resolveVariant(next.variant, sessionVariant, savedVariant, variants)
+        if (variant === activeVariant) {
+          return
+        }
+
+        activeVariant = variant
+        if (!next.model || footer.isClosed) {
+          return
+        }
+
+        footer.patch({
+          model: formatModelLabel(next.model, activeVariant),
+        })
+      })
+      .catch(() => {})
+  }
+
+  const setup = ready
+    .then(async (next) => {
+      ctx = next
+      meta = splashMeta({
+        title: next.sessionTitle,
+        session_id: next.sessionID,
+      })
+
+      footer.patch({ status: "loading session" })
+      const [session, saved] = await Promise.all([
+        resolveSessionInfo(next.sdk, next.sessionID, next.model),
+        resolveSavedVariant(next.model),
+      ])
+
+      first = session.first
+      sessionVariant = session.variant
+      savedVariant = saved
+      activeVariant = resolveVariant(next.variant, sessionVariant, savedVariant, variants)
+      if (next.model) {
+        footer.patch({
+          model: formatModelLabel(next.model, activeVariant),
+        })
+      }
+
+      if (!session.first) {
+        footer.patch({ first: false })
+      }
+
+      footer.patch({ status: "" })
+
+      if (input.afterPaint) {
+        void Promise.resolve(input.afterPaint(next)).catch(() => {})
+      }
+    })
+    .catch((error) => {
+      if (footer.isClosed) {
+        return
+      }
+
+      footer.append("error", formatUnknownError(error))
+      footer.patch({ status: "backend failed" })
+    })
+
+  const sigint = () => {
+    footer.requestExit()
+  }
+  process.on("SIGINT", sigint)
+
+  try {
+    if (seeded) {
+      await setup
+    }
+
+    let includeFiles = true
+    await runPromptQueue({
+      footer,
+      initialInput: input.initialInput,
+      run: async (prompt, signal) => {
+        try {
+          const next = await waitReady(ready, signal)
+          if (!next || signal.aborted || footer.isClosed) {
+            return
+          }
+
+          await runPromptTurn({
+            sdk: next.sdk,
+            sessionID: next.sessionID,
+            agent: next.agent,
+            model: next.model,
+            variant: activeVariant,
+            prompt,
+            files: input.files,
+            includeFiles,
+            thinking: input.thinking,
+            limits,
+            footer,
+            signal,
+          })
+          includeFiles = false
+          loadModel(next)
+        } catch (error) {
+          if (signal.aborted || footer.isClosed) {
+            return
+          }
+          footer.append("error", formatUnknownError(error))
+        }
+      },
+    })
+  } finally {
+    process.off("SIGINT", sigint)
+
+    if (!renderer.isDestroyed && ctx) {
+      const hasMessages = !(await resolveFirstPrompt(ctx.sdk, ctx.sessionID))
+      if (hasMessages && meta) {
+        queueSplash(
+          renderer,
+          state,
+          "exit",
+          exitSplash({
+            ...meta,
+            theme: theme.entry,
+            background: theme.background,
+          }),
+        )
+        await renderer.idle().catch(() => {})
+      }
+    }
+
+    footer.close()
+    footer.destroy()
+    shutdown(renderer)
+  }
+}
+
+export async function runInteractiveLocalMode(input: RunLocalInput): Promise<void> {
+  const sdk = createOpencodeClient({
+    baseUrl: "http://opencode.internal",
+    fetch: input.fetch,
+  })
+
+  return runInteractiveBootMode({
+    agent: input.agent,
+    model: input.model,
+    variant: input.variant,
+    files: input.files,
+    initialInput: input.initialInput,
+    thinking: input.thinking,
+    afterPaint: (ctx) => input.share(ctx.sdk, ctx.sessionID),
+    boot: async () => {
+      const agent = await input.resolveAgent()
+      const sess = await input.session(sdk)
+      if (!sess?.id) {
+        throw new Error("Session not found")
+      }
+
+      return {
+        sdk,
+        sessionID: sess.id,
+        sessionTitle: sess.title,
+        resume: false,
+        agent,
+        model: input.model,
+        variant: input.variant,
+      }
+    },
+  })
+}
+
+export async function runInteractiveMode(input: RunInput): Promise<void> {
+  const keybindsTask = resolveFooterKeybinds()
+  const modelTask = resolveModelInfo(input.sdk, input.model)
+  const sessionTask = resolveSessionInfo(input.sdk, input.sessionID, input.model)
+  const savedTask = resolveSavedVariant(input.model)
+
+  const state: SplashState = {
+    entry: false,
+    exit: false,
+  }
+  let variants: string[] = []
+  let limits: Record<string, number> = {}
+
+  const renderer = await createCliRenderer({
+    targetFps: 30,
+    maxFps: 60,
+    useMouse: false,
+    autoFocus: false,
+    openConsoleOnError: false,
+    exitOnCtrlC: false,
+    useKittyKeyboard: { events: process.platform === "win32" },
+    screenMode: "split-footer",
+    footerHeight: FOOTER_HEIGHT,
+    externalOutputMode: "capture-stdout",
+    consoleMode: "disabled",
+    clearOnShutdown: false,
+  })
+  const theme = await resolveRunTheme(renderer)
+  renderer.setBackgroundColor(theme.background)
+  const [keybinds, session, savedVariant] = await Promise.all([keybindsTask, sessionTask, savedTask])
+  const meta = splashMeta({
+    title: splashTitle(input.sessionTitle, session.history),
+    session_id: input.sessionID,
+  })
+  queueSplash(
+    renderer,
+    state,
+    "entry",
+    entrySplash({
+      ...meta,
+      theme: theme.entry,
+      background: theme.background,
+    }),
+  )
+  let activeVariant = resolveVariant(input.variant, session.variant, savedVariant, variants)
+  let aborting = false
+
+  const footer = new RunFooter(renderer, {
+    ...footerLabels({
+      agent: input.agent,
+      model: input.model,
+      variant: activeVariant,
+    }),
+    first: session.first,
+    history: session.history,
     theme,
     keybinds,
     onCycleVariant: () => {
@@ -575,26 +935,32 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
         })
     },
   })
+
+  void modelTask.then((info) => {
+    variants = info.variants
+    limits = info.limits
+
+    const next = resolveVariant(input.variant, session.variant, savedVariant, variants)
+    if (next === activeVariant) {
+      return
+    }
+
+    activeVariant = next
+    if (!input.model || footer.isClosed) {
+      return
+    }
+
+    footer.patch({
+      model: formatModelLabel(input.model, activeVariant),
+    })
+  })
+
   const sigint = () => {
     footer.requestExit()
   }
   process.on("SIGINT", sigint)
 
   try {
-    if (!input.resume) {
-      queueSplash(
-        renderer,
-        state,
-        "entry",
-        entrySplash({
-          ...meta,
-          theme: theme.entry,
-          background: theme.background,
-        }),
-      )
-      await renderer.idle().catch(() => {})
-    }
-
     let includeFiles = true
     await runPromptQueue({
       footer,
@@ -611,7 +977,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
             files: input.files,
             includeFiles,
             thinking: input.thinking,
-            limits: info.limits,
+            limits,
             footer,
             signal,
           })

@@ -23,6 +23,7 @@ type SplashInput = {
 type SplashWriterInput = SplashInput & {
   theme: RunEntryTheme
   background: ColorInput
+  showSession?: boolean
 }
 
 export type SplashMeta = {
@@ -183,10 +184,12 @@ function build(input: SplashWriterInput, kind: "entry" | "exit", ctx: Scrollback
 
   y += 1
 
-  const label = "Session".padEnd(10, " ")
-  push(lines, 2, y, label, input.theme.system.body, undefined, TextAttributes.DIM)
-  push(lines, 2 + label.length, y, meta.title, input.theme.assistant.body, undefined, TextAttributes.BOLD)
-  y += 1
+  if (input.showSession !== false) {
+    const label = "Session".padEnd(10, " ")
+    push(lines, 2, y, label, input.theme.system.body, undefined, TextAttributes.DIM)
+    push(lines, 2 + label.length, y, meta.title, input.theme.assistant.body, undefined, TextAttributes.BOLD)
+    y += 1
+  }
 
   if (kind === "entry") {
     push(lines, 2, y, "Type /exit or /quit to finish.", input.theme.system.body, undefined, undefined)

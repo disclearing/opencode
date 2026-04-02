@@ -27,7 +27,7 @@ import { SkillTool } from "../../tool/skill"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
-import { runInteractiveMode } from "./run/runtime"
+import { runInteractiveLocalMode, runInteractiveMode } from "./run/runtime"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -508,6 +508,77 @@ export const RunCommand = cmd({
       }
     }
 
+    async function localAgent() {
+      if (!args.agent) return undefined
+
+      const entry = await Agent.get(args.agent)
+      if (!entry) {
+        UI.println(
+          UI.Style.TEXT_WARNING_BOLD + "!",
+          UI.Style.TEXT_NORMAL,
+          `agent "${args.agent}" not found. Falling back to default agent`,
+        )
+        return undefined
+      }
+      if (entry.mode === "subagent") {
+        UI.println(
+          UI.Style.TEXT_WARNING_BOLD + "!",
+          UI.Style.TEXT_NORMAL,
+          `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
+        )
+        return undefined
+      }
+      return args.agent
+    }
+
+    async function attachAgent(sdk: OpencodeClient) {
+      if (!args.agent) return undefined
+
+      const modes = await sdk.app
+        .agents(undefined, { throwOnError: true })
+        .then((x) => x.data ?? [])
+        .catch(() => undefined)
+
+      if (!modes) {
+        UI.println(
+          UI.Style.TEXT_WARNING_BOLD + "!",
+          UI.Style.TEXT_NORMAL,
+          `failed to list agents from ${args.attach}. Falling back to default agent`,
+        )
+        return undefined
+      }
+
+      const agent = modes.find((a) => a.name === args.agent)
+      if (!agent) {
+        UI.println(
+          UI.Style.TEXT_WARNING_BOLD + "!",
+          UI.Style.TEXT_NORMAL,
+          `agent "${args.agent}" not found. Falling back to default agent`,
+        )
+        return undefined
+      }
+
+      if (agent.mode === "subagent") {
+        UI.println(
+          UI.Style.TEXT_WARNING_BOLD + "!",
+          UI.Style.TEXT_NORMAL,
+          `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
+        )
+        return undefined
+      }
+
+      return args.agent
+    }
+
+    async function pickAgent(sdk: OpencodeClient) {
+      if (!args.agent) return undefined
+      if (args.attach) {
+        return attachAgent(sdk)
+      }
+
+      return localAgent()
+    }
+
     async function execute(sdk: OpencodeClient) {
       function tool(part: ToolPart) {
         try {
@@ -664,66 +735,7 @@ export const RunCommand = cmd({
       }
 
       // Validate agent if specified
-      const agent = await (async () => {
-        if (!args.agent) return undefined
-
-        // When attaching, validate against the running server instead of local Instance state.
-        if (args.attach) {
-          const modes = await sdk.app
-            .agents(undefined, { throwOnError: true })
-            .then((x) => x.data ?? [])
-            .catch(() => undefined)
-
-          if (!modes) {
-            UI.println(
-              UI.Style.TEXT_WARNING_BOLD + "!",
-              UI.Style.TEXT_NORMAL,
-              `failed to list agents from ${args.attach}. Falling back to default agent`,
-            )
-            return undefined
-          }
-
-          const agent = modes.find((a) => a.name === args.agent)
-          if (!agent) {
-            UI.println(
-              UI.Style.TEXT_WARNING_BOLD + "!",
-              UI.Style.TEXT_NORMAL,
-              `agent "${args.agent}" not found. Falling back to default agent`,
-            )
-            return undefined
-          }
-
-          if (agent.mode === "subagent") {
-            UI.println(
-              UI.Style.TEXT_WARNING_BOLD + "!",
-              UI.Style.TEXT_NORMAL,
-              `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
-            )
-            return undefined
-          }
-
-          return args.agent
-        }
-
-        const entry = await Agent.get(args.agent)
-        if (!entry) {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `agent "${args.agent}" not found. Falling back to default agent`,
-          )
-          return undefined
-        }
-        if (entry.mode === "subagent") {
-          UI.println(
-            UI.Style.TEXT_WARNING_BOLD + "!",
-            UI.Style.TEXT_NORMAL,
-            `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
-          )
-          return undefined
-        }
-        return args.agent
-      })()
+      const agent = await pickAgent(sdk)
 
       const sess = await session(sdk)
       if (!sess?.id) {
@@ -777,6 +789,27 @@ export const RunCommand = cmd({
         thinking: args.thinking,
       })
       return
+    }
+
+    if (args.interactive && !args.attach && !args.session && !args.continue) {
+      const model = args.model ? Provider.parseModel(args.model) : undefined
+      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init)
+        return Server.Default().fetch(request)
+      }) as typeof globalThis.fetch
+
+      return await runInteractiveLocalMode({
+        fetch: fetchFn,
+        resolveAgent: localAgent,
+        session,
+        share,
+        agent: args.agent,
+        model,
+        variant: args.variant,
+        files,
+        initialInput: rawMessage.trim().length > 0 ? rawMessage : undefined,
+        thinking: args.thinking,
+      })
     }
 
     if (args.attach) {

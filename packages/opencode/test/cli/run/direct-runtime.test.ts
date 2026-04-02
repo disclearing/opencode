@@ -404,6 +404,22 @@ describe("run runtime", () => {
     expect(ui.appended).toEqual([{ kind: "user", text: "  hello  " }])
   })
 
+  test("treats initial /exit as close command", async () => {
+    const ui = createFooter()
+    let calls = 0
+
+    await runPromptQueue({
+      footer: ui.footer,
+      initialInput: "/exit",
+      run: async () => {
+        calls += 1
+      },
+    })
+
+    expect(calls).toBe(0)
+    expect(ui.appended).toEqual([])
+  })
+
   test("records last turn duration", async () => {
     const ui = createFooter()
 
