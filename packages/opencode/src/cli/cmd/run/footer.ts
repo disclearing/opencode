@@ -29,11 +29,13 @@ export class RunFooter implements FooterApi {
   private destroyed = false
   private prompts = new Set<(text: string) => void>()
   private closes = new Set<() => void>()
+  private queue: StreamCommit[] = []
+  private pending = false
+  private tail = true
   private base: number
   private rows = TEXTAREA_MIN_ROWS
   private state: Accessor<FooterState>
   private setState: Setter<FooterState>
-  private settle = false
   private interruptTimeout: NodeJS.Timeout | undefined
   private exitTimeout: NodeJS.Timeout | undefined
   private interruptHint: string
@@ -134,6 +136,25 @@ export class RunFooter implements FooterApi {
     }
 
     this.setState(state)
+
+    if (prev.phase === "running" && state.phase === "idle") {
+      this.flush()
+      if (!this.tail) {
+        this.renderer.writeToScrollback(
+          entryWriter(
+            {
+              kind: "assistant",
+              text: "",
+              phase: "final",
+              source: "assistant",
+              gap: true,
+            },
+            this.options.theme.entry,
+          ),
+        )
+        this.tail = true
+      }
+    }
   }
 
   public append(commit: StreamCommit): void {
@@ -141,12 +162,42 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    if (!normalizeEntry(commit)) {
+    if (!normalizeEntry(commit) && !commit.gap) {
       return
     }
 
-    this.renderer.writeToScrollback(entryWriter(commit, this.options.theme.entry))
-    this.scheduleSettleRender()
+    const last = this.queue.at(-1)
+    if (
+      last &&
+      last.phase === "progress" &&
+      commit.phase === "progress" &&
+      last.kind === commit.kind &&
+      last.source === commit.source &&
+      last.partID === commit.partID &&
+      last.tool === commit.tool
+    ) {
+      last.text += commit.text
+    } else {
+      this.queue.push(commit)
+    }
+
+    if (this.pending) {
+      return
+    }
+
+    this.pending = true
+    queueMicrotask(() => {
+      this.pending = false
+      this.flush()
+    })
+  }
+
+  public idle(): Promise<void> {
+    if (this.destroyed || this.renderer.isDestroyed) {
+      return Promise.resolve()
+    }
+
+    return this.renderer.idle().catch(() => {})
   }
 
   public close(): void {
@@ -154,6 +205,7 @@ export class RunFooter implements FooterApi {
       return
     }
 
+    this.flush()
     this.notifyClose()
   }
 
@@ -166,6 +218,7 @@ export class RunFooter implements FooterApi {
       return
     }
 
+    this.flush()
     this.destroyed = true
     this.notifyClose()
     this.clearInterruptTimer()
@@ -355,6 +408,7 @@ export class RunFooter implements FooterApi {
       return
     }
 
+    this.flush()
     this.destroyed = true
     this.notifyClose()
     this.clearInterruptTimer()
@@ -364,24 +418,31 @@ export class RunFooter implements FooterApi {
     this.closes.clear()
   }
 
-  private scheduleSettleRender(): void {
-    if (this.settle || this.destroyed || this.renderer.isDestroyed) {
+  private flush(): void {
+    if (this.destroyed || this.renderer.isDestroyed || this.queue.length === 0) {
+      this.queue.length = 0
       return
     }
 
-    this.settle = true
-    void this.renderer
-      .idle()
-      .then(() => {
-        if (this.destroyed || this.renderer.isDestroyed || this.closed) {
-          return
-        }
+    for (const commit of this.queue.splice(0)) {
+      this.renderer.writeToScrollback(entryWriter(commit, this.options.theme.entry))
+      this.tail = this.endsWithNewline(commit)
+    }
+  }
 
-        this.renderer.requestRender()
-      })
-      .catch(() => {})
-      .finally(() => {
-        this.settle = false
-      })
+  private endsWithNewline(commit: StreamCommit): boolean {
+    if (commit.gap) {
+      return true
+    }
+
+    if (commit.kind === "user") {
+      return true
+    }
+
+    if (commit.phase === "start" || commit.phase === "final") {
+      return true
+    }
+
+    return commit.text.endsWith("\n")
   }
 }

@@ -47,6 +47,9 @@ function createFooter() {
     append(commit) {
       appended.push(commit)
     },
+    idle() {
+      return Promise.resolve()
+    },
     close,
     destroy() {
       close()
@@ -295,7 +298,7 @@ describe("run runtime", () => {
     expect(prompts).toEqual(["one", "two"])
     expect(ui.appended).toEqual([
       { kind: "user", text: "one", phase: "start", source: "system" },
-      { kind: "user", text: "two", phase: "start", source: "system" },
+      { kind: "user", text: "\ntwo", phase: "start", source: "system" },
     ])
   })
 

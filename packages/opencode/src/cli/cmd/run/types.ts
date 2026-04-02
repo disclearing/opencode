@@ -1,4 +1,4 @@
-import type { OpencodeClient } from "@opencode-ai/sdk/v2"
+import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
 
 export type RunFilePart = {
   type: "file"
@@ -61,6 +61,8 @@ export type StreamCommit = {
   source: StreamSource
   partID?: string
   tool?: string
+  part?: ToolPart
+  gap?: boolean
 }
 
 export type FooterApi = {
@@ -69,6 +71,7 @@ export type FooterApi = {
   onClose(fn: () => void): () => void
   patch(next: FooterPatch): void
   append(commit: StreamCommit): void
+  idle(): Promise<void>
   close(): void
   destroy(): void
 }

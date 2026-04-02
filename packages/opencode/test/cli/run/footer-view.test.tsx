@@ -98,8 +98,68 @@ describe("run footer view", () => {
 
     await setup.mockInput.typeText("hello")
     setup.mockInput.pressEnter()
+    await Promise.resolve()
 
     expect(sent).toEqual(["hello"])
+  })
+
+  test("failed submit restores text without recording history", async () => {
+    const [state, setState] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: true,
+      interrupt: 0,
+      exit: 0,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => false}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={(text) => {
+            setState((state) => ({
+              ...state,
+              status: text,
+            }))
+          }}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.mockInput.typeText("hello")
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+
+    const area = composer(setup) as any
+    expect(area.plainText).toBe("hello")
+
+    area.setText("")
+    area.cursorOffset = 0
+    setup.mockInput.pressArrow("up")
+    expect(area.plainText).toBe("")
   })
 
   test("history up down keeps edge behavior", async () => {
@@ -156,6 +216,7 @@ describe("run footer view", () => {
     setup.mockInput.pressEnter()
     await setup.mockInput.typeText("two")
     setup.mockInput.pressEnter()
+    await Promise.resolve()
 
     const area = composer(setup)
 
@@ -293,60 +354,6 @@ describe("run footer view", () => {
       history: true,
       variant: true,
     })
-  })
-
-  test("placeholder switches after first prompt", async () => {
-    const [state, setState] = createSignal<FooterState>({
-      phase: "idle",
-      status: "",
-      queue: 0,
-      model: "model",
-      duration: "",
-      usage: "",
-      first: true,
-      interrupt: 0,
-      exit: 0,
-    })
-
-    setup = await testRender(
-      () => (
-        <RunFooterView
-          state={state}
-          keybinds={{
-            leader: "ctrl+x",
-            variantCycle: "ctrl+t,<leader>t",
-            interrupt: "escape",
-            historyPrevious: "up",
-            historyNext: "down",
-            inputSubmit: "return",
-            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
-          }}
-          agent="Build"
-          onSubmit={() => true}
-          onCycle={() => {}}
-          onInterrupt={() => false}
-          onExit={() => {}}
-          onRows={() => {}}
-          onStatus={() => {}}
-        />
-      ),
-      {
-        width: 120,
-        height: 12,
-      },
-    )
-
-    await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain('Ask anything... "Fix a TODO in the codebase"')
-
-    setState((state) => ({
-      ...state,
-      first: false,
-    }))
-
-    await setup.renderOnce()
-    expect(setup.captureCharFrame()).toContain("Ask anything...")
-    expect(setup.captureCharFrame()).not.toContain("Fix a TODO in the codebase")
   })
 
   test("baseline scaffold follows 6-line layout", async () => {

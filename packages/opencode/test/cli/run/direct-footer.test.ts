@@ -11,6 +11,7 @@ async function create() {
 
   setup.renderer.screenMode = "split-footer"
   setup.renderer.footerHeight = 6
+  setup.renderer.externalOutputMode = "capture-stdout"
 
   let interrupts = 0
   let exits = 0
@@ -114,6 +115,30 @@ describe("run footer", () => {
       expect(ctx.setup.renderer.footerHeight).toBe(11)
       sync(-3)
       expect(ctx.setup.renderer.footerHeight).toBe(6)
+    } finally {
+      ctx.destroy()
+    }
+  })
+
+  test("inserts spacer line after assistant turn", async () => {
+    const ctx = await create()
+
+    const writes: unknown[] = []
+    const write = ctx.setup.renderer.writeToScrollback.bind(ctx.setup.renderer)
+    ;(ctx.setup.renderer as any).writeToScrollback = (entry: unknown) => {
+      writes.push(entry)
+      return write(entry as any)
+    }
+
+    try {
+      ctx.footer.append({ kind: "assistant", text: "hello", phase: "progress", source: "assistant" })
+      ;(ctx.footer as any).flush()
+      expect(writes.length).toBe(1)
+
+      ctx.footer.patch({ phase: "running" })
+      ctx.footer.patch({ phase: "idle" })
+
+      expect(writes.length).toBe(2)
     } finally {
       ctx.destroy()
     }

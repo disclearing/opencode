@@ -18,6 +18,7 @@ type Tokens = {
 }
 
 type PartKind = "assistant" | "reasoning"
+type MessageRole = "assistant" | "user"
 
 export type SessionCommit = StreamCommit
 
@@ -25,6 +26,9 @@ export type SessionData = {
   ids: Set<string>
   tools: Set<string>
   announced: boolean
+  role: Map<string, MessageRole>
+  msg: Map<string, string>
+  end: Set<string>
   text: Map<string, string>
   sent: Map<string, number>
   part: Map<string, PartKind>
@@ -50,6 +54,9 @@ export function createSessionData(): SessionData {
     ids: new Set(),
     tools: new Set(),
     announced: false,
+    role: new Map(),
+    msg: new Map(),
+    end: new Set(),
     text: new Map(),
     sent: new Map(),
     part: new Map(),
@@ -130,7 +137,7 @@ export function flushPart(
   data: SessionData,
   commits: SessionCommit[],
   partID: string,
-  end: boolean,
+  _end: boolean,
   interrupted: boolean = false,
 ) {
   const kind = data.part.get(partID)
@@ -138,9 +145,20 @@ export function flushPart(
 
   const text = data.text.get(partID) ?? ""
   const sent = data.sent.get(partID) ?? 0
-  const chunk = text.slice(sent)
-  if (chunk) {
+  const raw = text.slice(sent)
+  let chunk = raw
+  if (sent === 0 && (kind === "assistant" || kind === "reasoning")) {
+    chunk = chunk.replace(/^\n+/, "")
+    if (chunk) {
+      chunk = `\n${chunk}`
+    }
+  }
+
+  if (raw) {
     data.sent.set(partID, text.length)
+  }
+
+  if (chunk) {
     commits.push({
       kind: kind === "assistant" ? "assistant" : "reasoning",
       text: chunk,
@@ -150,20 +168,69 @@ export function flushPart(
     })
   }
 
-  if (!end && !interrupted) return
+  if (!interrupted) {
+    return
+  }
 
   commits.push({
     kind: kind === "assistant" ? "assistant" : "reasoning",
-    text: interrupted ? `[${kind}:interrupted]` : `[${kind}:end]`,
+    text: `[${kind}:interrupted]`,
     phase: "final",
     source: kind,
     partID,
   })
 }
 
+function drop(data: SessionData, partID: string) {
+  data.part.delete(partID)
+  data.text.delete(partID)
+  data.sent.delete(partID)
+  data.msg.delete(partID)
+  data.end.delete(partID)
+}
+
+function replay(data: SessionData, commits: SessionCommit[], messageID: string, role: MessageRole, thinking: boolean) {
+  for (const [partID, msg] of [...data.msg.entries()]) {
+    if (msg !== messageID || data.ids.has(partID)) {
+      continue
+    }
+
+    if (role === "user") {
+      data.ids.add(partID)
+      drop(data, partID)
+      continue
+    }
+
+    const kind = data.part.get(partID)
+    if (!kind) {
+      continue
+    }
+
+    if (kind === "reasoning" && !thinking) {
+      if (data.end.has(partID)) {
+        data.ids.add(partID)
+      }
+      drop(data, partID)
+      continue
+    }
+
+    flushPart(data, commits, partID, false)
+
+    if (data.end.has(partID)) {
+      data.ids.add(partID)
+      drop(data, partID)
+    }
+  }
+}
+
 export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
   for (const partID of data.part.keys()) {
     if (!data.ids.has(partID)) {
+      const msg = data.msg.get(partID)
+      if (msg && data.role.get(msg) !== "assistant") {
+        continue
+      }
+
       flushPart(data, commits, partID, false, true)
     }
   }
@@ -197,6 +264,10 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     }
 
     const info = event.properties.info
+    if (typeof info.id === "string") {
+      data.role.set(info.id, info.role)
+      replay(data, commits, info.id, info.role, input.thinking)
+    }
     if (info.role !== "assistant") {
       return out(data, commits)
     }
@@ -208,6 +279,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       input.limits[modelKey(info.providerID, info.modelID)],
       typeof info.cost === "number" ? info.cost : undefined,
     )
+
     return out(data, commits, status, usage)
   }
 
@@ -267,14 +339,28 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         source: "tool",
         partID: part.id,
         tool: part.tool,
+        part,
       })
       return out(data, commits, toolStatus(part))
     }
 
     if (part.type === "tool" && part.state.status === "completed") {
+      const seen = data.tools.has(part.id)
       data.tools.delete(part.id)
       if (data.ids.has(part.id)) {
         return out(data, commits)
+      }
+
+      if (!seen) {
+        commits.push({
+          kind: "tool",
+          text: `[tool:${part.tool}] ${toolStatus(part)}`,
+          phase: "start",
+          source: "tool",
+          partID: part.id,
+          tool: part.tool,
+          part,
+        })
       }
 
       data.ids.add(part.id)
@@ -288,6 +374,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           source: "tool",
           partID: part.id,
           tool: part.tool,
+          part,
         })
       }
 
@@ -298,6 +385,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         source: "tool",
         partID: part.id,
         tool: part.tool,
+        part,
       })
 
       return out(data, commits)
@@ -318,6 +406,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         source: "tool",
         partID: part.id,
         tool: part.tool,
+        part,
       })
 
       return out(data, commits)
@@ -328,25 +417,48 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         return out(data, commits)
       }
 
-      if (part.type === "reasoning" && !input.thinking) {
+      const kind = part.type === "text" ? "assistant" : "reasoning"
+      const msg = part.messageID
+      if (typeof msg === "string") {
+        data.msg.set(part.id, msg)
+        const role = data.role.get(msg)
+        if (role === "user") {
+          data.ids.add(part.id)
+          drop(data, part.id)
+          return out(data, commits)
+        }
+
+        if (!role) {
+          if (kind === "reasoning" && !input.thinking) {
+            if (part.time?.end) {
+              data.ids.add(part.id)
+            }
+            return out(data, commits)
+          }
+
+          if (!data.part.has(part.id)) {
+            data.part.set(part.id, kind)
+          }
+
+          data.text.set(part.id, part.text)
+          if (part.time?.end) {
+            data.end.add(part.id)
+          }
+          return out(data, commits)
+        }
+      }
+
+      if (kind === "reasoning" && !input.thinking) {
         if (part.time?.end) {
           data.ids.add(part.id)
-          data.text.delete(part.id)
+          drop(data, part.id)
         }
         return out(data, commits)
       }
 
-      const kind = part.type === "text" ? "assistant" : "reasoning"
       const wasKnown = data.part.has(part.id)
       if (!wasKnown) {
         data.part.set(part.id, kind)
-        commits.push({
-          kind: kind === "assistant" ? "assistant" : "reasoning",
-          text: `[${kind}]`,
-          phase: "start",
-          source: kind,
-          partID: part.id,
-        })
       }
 
       data.text.set(part.id, part.text)
@@ -354,9 +466,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
       if (part.time?.end) {
         data.ids.add(part.id)
-        data.part.delete(part.id)
-        data.text.delete(part.id)
-        data.sent.delete(part.id)
+        drop(data, part.id)
       }
 
       return out(data, commits)

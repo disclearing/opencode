@@ -406,14 +406,24 @@ export function RunFooterView(props: RunFooterViewProps) {
       return
     }
 
-    if (!props.onSubmit(text)) {
-      return
-    }
-
-    push(text)
     area.setText("")
     scheduleRows()
     area.focus()
+    queueMicrotask(() => {
+      if (props.onSubmit(text)) {
+        push(text)
+        return
+      }
+
+      if (!area || area.isDestroyed) {
+        return
+      }
+
+      area.setText(text)
+      area.cursorOffset = area.plainText.length
+      syncRows()
+      area.focus()
+    })
   }
 
   onMount(() => {

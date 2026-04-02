@@ -383,6 +383,7 @@ function splashTitle(title: string | undefined, history: string[]): string | und
 /** @internal Exported for testing */
 export async function runPromptQueue(input: QueueInput): Promise<void> {
   const q: string[] = []
+  let turn = 0
   let run = false
   let closed = input.footer.isClosed
   let ctrl: AbortController | undefined
@@ -432,7 +433,6 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           status: "sending prompt",
           queue: q.length,
         })
-        input.footer.append({ kind: "user", text: prompt, phase: "start", source: "system" })
         const start = Date.now()
         const next = new AbortController()
         ctrl = next
@@ -441,6 +441,10 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
             () => ({ type: "done" as const }),
             (error) => ({ type: "error" as const, error }),
           )
+          await input.footer.idle()
+          const text = turn === 0 ? prompt : `\n${prompt}`
+          turn += 1
+          input.footer.append({ kind: "user", text, phase: "start", source: "system" })
           const out = await Promise.race([task, until.then(() => ({ type: "closed" as const }))])
           if (out.type === "closed") {
             next.abort()
