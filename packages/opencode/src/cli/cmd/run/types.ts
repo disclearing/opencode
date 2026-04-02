@@ -50,12 +50,25 @@ export type FooterKeybinds = {
   inputNewline: string
 }
 
+export type StreamPhase = "start" | "progress" | "final"
+
+export type StreamSource = "assistant" | "reasoning" | "tool" | "system"
+
+export type StreamCommit = {
+  kind: EntryKind
+  text: string
+  phase: StreamPhase
+  source: StreamSource
+  partID?: string
+  tool?: string
+}
+
 export type FooterApi = {
   readonly isClosed: boolean
   onPrompt(fn: (text: string) => void): () => void
   onClose(fn: () => void): () => void
   patch(next: FooterPatch): void
-  append(kind: EntryKind, text: string): void
+  append(commit: StreamCommit): void
   close(): void
   destroy(): void
 }

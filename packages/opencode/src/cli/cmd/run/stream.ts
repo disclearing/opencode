@@ -1,5 +1,5 @@
 import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
-import { createSessionData, reduceSessionData } from "./session-data"
+import { createSessionData, reduceSessionData, flushInterrupted, type SessionCommit } from "./session-data"
 import type { FooterApi, RunFilePart, RunInput } from "./types"
 
 type TurnInput = {
@@ -60,13 +60,9 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     input.signal?.removeEventListener("abort", stop)
     throw error
   }
-  const stream = events.stream as unknown as {
-    return?: (value?: unknown) => Promise<unknown>
-  }
   const close = () => {
-    if (typeof stream.return === "function") {
-      void stream.return().catch(() => {})
-    }
+    // Pass undefined explicitly so TS accepts AsyncGenerator.return().
+    void events.stream.return(undefined).catch(() => { })
   }
   let data = createSessionData()
 
@@ -88,7 +84,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         data = next.data
 
         for (const commit of next.commits) {
-          input.footer.append(commit.kind, commit.text)
+          input.footer.append(commit)
         }
 
         if (next.status) {
@@ -143,6 +139,11 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     )
 
     if (abort.signal.aborted) {
+      const commits: SessionCommit[] = []
+      flushInterrupted(data, commits)
+      for (const commit of commits) {
+        input.footer.append(commit)
+      }
       return
     }
 
@@ -159,11 +160,16 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     abort.abort()
     if (canceled) {
       close()
-      void watch.catch(() => {})
+      const commits: SessionCommit[] = []
+      flushInterrupted(data, commits)
+      for (const commit of commits) {
+        input.footer.append(commit)
+      }
+      void watch.catch(() => { })
       return
     }
 
-    await watch.catch(() => {})
+    await watch.catch(() => { })
     throw error
   } finally {
     close()

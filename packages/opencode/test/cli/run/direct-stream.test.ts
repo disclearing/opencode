@@ -14,7 +14,7 @@ function eventStream(events: unknown[]) {
 
 describe("run stream", () => {
   test("keeps event order and ignores other sessions", async () => {
-    const appended: Array<{ kind: string; text: string }> = []
+    const appended: Array<unknown> = []
     const patched: unknown[] = []
     const promptCalls: Array<{ payload: unknown; options: unknown }> = []
 
@@ -166,8 +166,8 @@ describe("run stream", () => {
         patch(next) {
           patched.push(next)
         },
-        append(kind, text) {
-          appended.push({ kind, text })
+        append(commit) {
+          appended.push(commit)
         },
         close() {},
         destroy() {},
@@ -190,11 +190,57 @@ describe("run stream", () => {
     expect(patched).toContainEqual({
       usage: "125 (13%) · $2.31",
     })
-    expect(appended).toEqual([{ kind: "assistant", text: "assistant reply" }])
+    expect(appended).toEqual([
+      {
+        kind: "assistant",
+        text: "[assistant]",
+        phase: "start",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "assistant reply",
+        phase: "progress",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "[assistant:end]",
+        phase: "final",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "tool",
+        text: "[tool:task] running investigate",
+        phase: "start",
+        source: "tool",
+        partID: "task-1",
+        tool: "task",
+      },
+      {
+        kind: "tool",
+        text: "file-a\n",
+        phase: "progress",
+        source: "tool",
+        partID: "tool-1",
+        tool: "bash",
+      },
+      {
+        kind: "tool",
+        text: "[tool:bash:end]",
+        phase: "final",
+        source: "tool",
+        partID: "tool-1",
+        tool: "bash",
+      },
+    ])
   })
 
   test("auto rejects permissions and emits session errors", async () => {
-    const appended: Array<{ kind: string; text: string }> = []
+    const appended: Array<unknown> = []
     const patched: unknown[] = []
     const permissionReplies: unknown[] = []
 
@@ -266,8 +312,8 @@ describe("run stream", () => {
         patch(next) {
           patched.push(next)
         },
-        append(kind, text) {
-          appended.push({ kind, text })
+        append(commit) {
+          appended.push(commit)
         },
         close() {},
         destroy() {},
@@ -290,12 +336,14 @@ describe("run stream", () => {
       {
         kind: "error",
         text: "permission denied",
+        phase: "start",
+        source: "system",
       },
     ])
   })
 
   test("keeps status-only events out of transcript commits", async () => {
-    const appended: Array<{ kind: string; text: string }> = []
+    const appended: Array<unknown> = []
     const patched: unknown[] = []
     const replies: unknown[] = []
 
@@ -409,8 +457,8 @@ describe("run stream", () => {
         patch(next) {
           patched.push(next)
         },
-        append(kind, text) {
-          appended.push({ kind, text })
+        append(commit) {
+          appended.push(commit)
         },
         close() {},
         destroy() {},
@@ -436,12 +484,37 @@ describe("run stream", () => {
       phase: "running",
       status: "running investigate",
     })
-    expect(appended).toEqual([])
+    expect(appended).toEqual([
+      {
+        kind: "tool",
+        partID: "tool-1",
+        phase: "start",
+        source: "tool",
+        text: "[tool:task] running investigate",
+        tool: "task",
+      },
+      {
+        kind: "tool",
+        partID: "tool-1",
+        phase: "progress",
+        source: "tool",
+        text: "ok",
+        tool: "task",
+      },
+      {
+        kind: "tool",
+        partID: "tool-1",
+        phase: "final",
+        source: "tool",
+        text: "[tool:task:end]",
+        tool: "task",
+      },
+    ])
   })
 
   test("shows waiting status when assistant never announces", async () => {
     const patched: unknown[] = []
-    const appended: Array<{ kind: string; text: string }> = []
+    const appended: Array<unknown> = []
 
     const sdk = {
       event: {
@@ -488,8 +561,8 @@ describe("run stream", () => {
         patch(next) {
           patched.push(next)
         },
-        append(kind, text) {
-          appended.push({ kind, text })
+        append(commit) {
+          appended.push(commit)
         },
         close() {},
         destroy() {},
@@ -703,5 +776,344 @@ describe("run stream", () => {
     ])
 
     expect(result).toBe("done")
+  })
+
+  test("streams assistant text in chunk order", async () => {
+    const appended: Array<unknown> = []
+    const sdk = {
+      event: {
+        subscribe: async () =>
+          eventStream([
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "txt-1",
+                  sessionID: "session-1",
+                  type: "text",
+                  text: "",
+                },
+              },
+            },
+            {
+              type: "message.part.delta",
+              properties: {
+                sessionID: "session-1",
+                partID: "txt-1",
+                field: "text",
+                delta: "hel",
+              },
+            },
+            {
+              type: "message.part.delta",
+              properties: {
+                sessionID: "session-1",
+                partID: "txt-1",
+                field: "text",
+                delta: "lo",
+              },
+            },
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "txt-1",
+                  sessionID: "session-1",
+                  type: "text",
+                  text: "hello",
+                  time: { end: Date.now() },
+                },
+              },
+            },
+            {
+              type: "session.status",
+              properties: { sessionID: "session-1", status: { type: "idle" } },
+            },
+          ]),
+      },
+      session: { prompt: async () => {} },
+      permission: { reply: async () => {} },
+    } as unknown as OpencodeClient
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hi",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      footer: {
+        isClosed: false,
+        onPrompt: () => () => {},
+        onClose: () => () => {},
+        patch: () => {},
+        append: (commit) => appended.push(commit),
+        close: () => {},
+        destroy: () => {},
+      },
+    })
+
+    expect(appended).toEqual([
+      {
+        kind: "assistant",
+        text: "[assistant]",
+        phase: "start",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "hel",
+        phase: "progress",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "lo",
+        phase: "progress",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "[assistant:end]",
+        phase: "final",
+        source: "assistant",
+        partID: "txt-1",
+      },
+    ])
+  })
+
+  test("buffers unknown part kind until part.updated arrives", async () => {
+    const appended: Array<unknown> = []
+    const sdk = {
+      event: {
+        subscribe: async () =>
+          eventStream([
+            {
+              type: "message.part.delta",
+              properties: {
+                sessionID: "session-1",
+                partID: "txt-1",
+                field: "text",
+                delta: "hello",
+              },
+            },
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "txt-1",
+                  sessionID: "session-1",
+                  type: "text",
+                  text: "hello",
+                  time: { end: Date.now() },
+                },
+              },
+            },
+            {
+              type: "session.status",
+              properties: { sessionID: "session-1", status: { type: "idle" } },
+            },
+          ]),
+      },
+      session: { prompt: async () => {} },
+      permission: { reply: async () => {} },
+    } as unknown as OpencodeClient
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hi",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      footer: {
+        isClosed: false,
+        onPrompt: () => () => {},
+        onClose: () => () => {},
+        patch: () => {},
+        append: (commit) => appended.push(commit),
+        close: () => {},
+        destroy: () => {},
+      },
+    })
+
+    expect(appended).toEqual([
+      {
+        kind: "assistant",
+        text: "[assistant]",
+        phase: "start",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "hello",
+        phase: "progress",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "[assistant:end]",
+        phase: "final",
+        source: "assistant",
+        partID: "txt-1",
+      },
+    ])
+  })
+
+  test("streams reasoning only when thinking=true", async () => {
+    const appended: Array<unknown> = []
+    const sdk = {
+      event: {
+        subscribe: async () =>
+          eventStream([
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "reason-1",
+                  sessionID: "session-1",
+                  type: "reasoning",
+                  text: "think",
+                  time: { end: Date.now() },
+                },
+              },
+            },
+            {
+              type: "session.status",
+              properties: { sessionID: "session-1", status: { type: "idle" } },
+            },
+          ]),
+      },
+      session: { prompt: async () => {} },
+      permission: { reply: async () => {} },
+    } as unknown as OpencodeClient
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hi",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      footer: {
+        isClosed: false,
+        onPrompt: () => () => {},
+        onClose: () => () => {},
+        patch: () => {},
+        append: (commit) => appended.push(commit),
+        close: () => {},
+        destroy: () => {},
+      },
+    })
+
+    expect(appended).toEqual([])
+  })
+
+  test("emits interrupted marker on abort", async () => {
+    const appended: Array<unknown> = []
+    const ctrl = new AbortController()
+
+    const sdk = {
+      event: {
+        subscribe: async () =>
+          eventStream([
+            {
+              type: "message.part.updated",
+              properties: {
+                part: {
+                  id: "txt-1",
+                  sessionID: "session-1",
+                  type: "text",
+                  text: "",
+                },
+              },
+            },
+            {
+              type: "message.part.delta",
+              properties: {
+                sessionID: "session-1",
+                partID: "txt-1",
+                field: "text",
+                delta: "unfinished",
+              },
+            },
+            {
+              type: "session.status",
+              properties: { sessionID: "session-1", status: { type: "idle" } },
+            },
+          ]),
+      },
+      session: {
+        prompt: async () => {
+          await new Promise((r) => setTimeout(r, 10))
+          ctrl.abort()
+        },
+      },
+      permission: { reply: async () => {} },
+    } as unknown as OpencodeClient
+
+    await runPromptTurn({
+      sdk,
+      sessionID: "session-1",
+      agent: undefined,
+      model: undefined,
+      variant: undefined,
+      prompt: "hi",
+      files: [],
+      includeFiles: false,
+      thinking: false,
+      limits: {},
+      signal: ctrl.signal,
+      footer: {
+        isClosed: false,
+        onPrompt: () => () => {},
+        onClose: () => () => {},
+        patch: () => {},
+        append: (commit) => appended.push(commit),
+        close: () => {},
+        destroy: () => {},
+      },
+    })
+
+    expect(appended).toEqual([
+      {
+        kind: "assistant",
+        text: "[assistant]",
+        phase: "start",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "unfinished",
+        phase: "progress",
+        source: "assistant",
+        partID: "txt-1",
+      },
+      {
+        kind: "assistant",
+        text: "[assistant:interrupted]",
+        phase: "final",
+        source: "assistant",
+        partID: "txt-1",
+      },
+    ])
   })
 })

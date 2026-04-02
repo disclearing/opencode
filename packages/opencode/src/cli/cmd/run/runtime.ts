@@ -432,7 +432,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           status: "sending prompt",
           queue: q.length,
         })
-        input.footer.append("user", prompt)
+        input.footer.append({ kind: "user", text: prompt, phase: "start", source: "system" })
         const start = Date.now()
         const next = new AbortController()
         ctrl = next
@@ -739,7 +739,7 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
         return
       }
 
-      footer.append("error", formatUnknownError(error))
+      footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
       footer.patch({ status: "backend failed" })
     })
 
@@ -784,7 +784,7 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
           if (signal.aborted || footer.isClosed) {
             return
           }
-          footer.append("error", formatUnknownError(error))
+          footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
         }
       },
     })
@@ -986,7 +986,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
           if (signal.aborted || footer.isClosed) {
             return
           }
-          footer.append("error", formatUnknownError(error))
+          footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
         }
       },
     })

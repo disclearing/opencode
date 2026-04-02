@@ -7,7 +7,7 @@ import {
   type ScrollbackWriter,
 } from "@opentui/core"
 import { RUN_THEME_FALLBACK, type RunEntryTheme } from "./theme"
-import type { EntryKind } from "./types"
+import type { StreamCommit } from "./types"
 
 type Paint = {
   fg: ColorInput
@@ -16,11 +16,19 @@ type Paint = {
 
 let id = 0
 
-function look(kind: EntryKind, theme: RunEntryTheme): Paint {
+function look(commit: StreamCommit, theme: RunEntryTheme): Paint {
+  const kind = commit.kind
   if (kind === "user") {
     return {
       fg: theme.user.body,
       attributes: TextAttributes.BOLD,
+    }
+  }
+
+  if (commit.phase === "final") {
+    return {
+      fg: theme.system.body,
+      attributes: TextAttributes.DIM,
     }
   }
 
@@ -55,8 +63,9 @@ function look(kind: EntryKind, theme: RunEntryTheme): Paint {
   }
 }
 
-export function normalizeEntry(kind: EntryKind, text: string): string {
-  const raw = text.replace(/\r/g, "")
+export function normalizeEntry(commit: StreamCommit): string {
+  const raw = commit.text.replace(/\r/g, "")
+  const kind = commit.kind
 
   if (kind === "user") {
     if (!raw.trim()) {
@@ -66,34 +75,36 @@ export function normalizeEntry(kind: EntryKind, text: string): string {
     return `› ${raw}`
   }
 
-  if (kind === "assistant") {
+  if (commit.phase === "start" || commit.phase === "final") {
     return raw.trim()
+  }
+
+  if (kind === "assistant") {
+    // Preserve body formatting for progress
+    return raw
   }
 
   if (kind === "reasoning") {
-    const body = raw.replace(/\[REDACTED\]/g, "").trim()
-    if (!body) {
-      return ""
-    }
-
-    if (body.startsWith("Thinking:")) {
-      return body
-    }
-
-    return `Thinking: ${body}`
+    const body = raw.replace(/\[REDACTED\]/g, "")
+    // Keep reasoning raw unless we need special block formatting, but for now we preserve
+    return body
   }
 
   if (kind === "error") {
-    return raw.trim()
+    return raw
   }
 
-  return raw.trim()
+  return raw
 }
 
-function build(kind: EntryKind, text: string, ctx: ScrollbackRenderContext, theme: RunEntryTheme): ScrollbackSnapshot {
-  const body = normalizeEntry(kind, text)
+function build(commit: StreamCommit, ctx: ScrollbackRenderContext, theme: RunEntryTheme): ScrollbackSnapshot {
+  const body = normalizeEntry(commit)
   const width = Math.max(1, ctx.width)
-  const style = look(kind, theme)
+  const style = look(commit, theme)
+
+  const startOnNewLine = commit.phase === "start" || commit.phase === "final" || commit.kind === "user"
+  const trailingNewline = commit.phase === "start" || commit.phase === "final" || commit.kind === "user"
+
   const root = new TextRenderable(ctx.renderContext, {
     id: `run-direct-entry-${id++}`,
     position: "absolute",
@@ -101,7 +112,7 @@ function build(kind: EntryKind, text: string, ctx: ScrollbackRenderContext, them
     top: 0,
     width,
     height: 1,
-    content: `${body}\n`,
+    content: body,
     wrapMode: "word",
     fg: style.fg,
     attributes: style.attributes,
@@ -114,8 +125,8 @@ function build(kind: EntryKind, text: string, ctx: ScrollbackRenderContext, them
     width,
     height,
     rowColumns: width,
-    startOnNewLine: true,
-    trailingNewline: false,
+    startOnNewLine,
+    trailingNewline,
   }
 }
 
@@ -151,12 +162,8 @@ function buildBlock(text: string, ctx: ScrollbackRenderContext, theme: RunEntryT
   }
 }
 
-export function entryWriter(
-  kind: EntryKind,
-  text: string,
-  theme: RunEntryTheme = RUN_THEME_FALLBACK.entry,
-): ScrollbackWriter {
-  return (ctx) => build(kind, text, ctx, theme)
+export function entryWriter(commit: StreamCommit, theme: RunEntryTheme = RUN_THEME_FALLBACK.entry): ScrollbackWriter {
+  return (ctx) => build(commit, ctx, theme)
 }
 
 export function blockWriter(text: string, theme: RunEntryTheme = RUN_THEME_FALLBACK.entry): ScrollbackWriter {

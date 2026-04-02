@@ -1,6 +1,6 @@
 import type { Event, ToolPart } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../../util/locale"
-import type { EntryKind } from "./types"
+import type { StreamCommit } from "./types"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -17,16 +17,17 @@ type Tokens = {
   }
 }
 
-export type SessionCommit = {
-  kind: EntryKind
-  text: string
-}
+type PartKind = "assistant" | "reasoning"
+
+export type SessionCommit = StreamCommit
 
 export type SessionData = {
   ids: Set<string>
   tools: Set<string>
   announced: boolean
-  delta: Map<string, string>
+  text: Map<string, string>
+  sent: Map<string, number>
+  part: Map<string, PartKind>
 }
 
 export type SessionDataInput = {
@@ -49,7 +50,9 @@ export function createSessionData(): SessionData {
     ids: new Set(),
     tools: new Set(),
     announced: false,
-    delta: new Map(),
+    text: new Map(),
+    sent: new Map(),
+    part: new Map(),
   }
 }
 
@@ -123,20 +126,47 @@ function toolStatus(part: ToolPart): string {
   return "running task"
 }
 
-function deltaKey(partID: string, field: string): string {
-  return `${partID}:${field}`
-}
+export function flushPart(
+  data: SessionData,
+  commits: SessionCommit[],
+  partID: string,
+  end: boolean,
+  interrupted: boolean = false,
+) {
+  const kind = data.part.get(partID)
+  if (!kind) return
 
-function mergeDelta(data: SessionData, partID: string, text: string): string {
-  const key = deltaKey(partID, "text")
-  const delta = data.delta.get(key)
-  data.delta.delete(key)
-
-  if (text) {
-    return text
+  const text = data.text.get(partID) ?? ""
+  const sent = data.sent.get(partID) ?? 0
+  const chunk = text.slice(sent)
+  if (chunk) {
+    data.sent.set(partID, text.length)
+    commits.push({
+      kind: kind === "assistant" ? "assistant" : "reasoning",
+      text: chunk,
+      phase: "progress",
+      source: kind,
+      partID,
+    })
   }
 
-  return delta ?? text
+  if (!end && !interrupted) return
+
+  commits.push({
+    kind: kind === "assistant" ? "assistant" : "reasoning",
+    text: interrupted ? `[${kind}:interrupted]` : `[${kind}:end]`,
+    phase: "final",
+    source: kind,
+    partID,
+  })
+}
+
+export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
+  for (const partID of data.part.keys()) {
+    if (!data.ids.has(partID)) {
+      flushPart(data, commits, partID, false, true)
+    }
+  }
 }
 
 function out(data: SessionData, commits: SessionCommit[], status?: string, usage?: string): SessionDataOutput {
@@ -198,12 +228,19 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    if (data.ids.has(event.properties.partID)) {
+    const partID = event.properties.partID
+    if (data.ids.has(partID)) {
       return out(data, commits)
     }
 
-    const key = deltaKey(event.properties.partID, event.properties.field)
-    data.delta.set(key, `${data.delta.get(key) ?? ""}${event.properties.delta}`)
+    const current = data.text.get(partID) ?? ""
+    data.text.set(partID, current + event.properties.delta)
+
+    const kind = data.part.get(partID)
+    if (kind) {
+      flushPart(data, commits, partID, false)
+    }
+
     return out(data, commits)
   }
 
@@ -223,6 +260,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       data.tools.add(part.id)
+      commits.push({
+        kind: "tool",
+        text: `[tool:${part.tool}] ${toolStatus(part)}`,
+        phase: "start",
+        source: "tool",
+        partID: part.id,
+        tool: part.tool,
+      })
       return out(data, commits, toolStatus(part))
     }
 
@@ -233,6 +278,28 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       data.ids.add(part.id)
+
+      const output = part.state.output
+      if (typeof output === "string" && output.trim()) {
+        commits.push({
+          kind: "tool",
+          text: output,
+          phase: "progress",
+          source: "tool",
+          partID: part.id,
+          tool: part.tool,
+        })
+      }
+
+      commits.push({
+        kind: "tool",
+        text: `[tool:${part.tool}:end]`,
+        phase: "final",
+        source: "tool",
+        partID: part.id,
+        tool: part.tool,
+      })
+
       return out(data, commits)
     }
 
@@ -243,59 +310,55 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       data.ids.add(part.id)
-      const text = `${part.tool}: ${part.state.error}`.trim()
-      if (!text) {
-        return out(data, commits)
-      }
-
+      const errorText = part.state.error ?? "unknown error"
       commits.push({
-        kind: "error",
-        text,
+        kind: "tool",
+        text: `[tool:${part.tool}:error] ${errorText}`,
+        phase: "final",
+        source: "tool",
+        partID: part.id,
+        tool: part.tool,
       })
+
       return out(data, commits)
     }
 
-    if (part.type === "text") {
-      if (!part.time?.end) {
-        return out(data, commits)
-      }
-
+    if (part.type === "text" || part.type === "reasoning") {
       if (data.ids.has(part.id)) {
         return out(data, commits)
       }
 
-      data.ids.add(part.id)
-      const text = mergeDelta(data, part.id, part.text).trim()
-      if (!text) {
+      if (part.type === "reasoning" && !input.thinking) {
+        if (part.time?.end) {
+          data.ids.add(part.id)
+          data.text.delete(part.id)
+        }
         return out(data, commits)
       }
 
-      commits.push({
-        kind: "assistant",
-        text,
-      })
-      return out(data, commits)
-    }
-
-    if (part.type === "reasoning") {
-      if (!part.time?.end) {
-        return out(data, commits)
+      const kind = part.type === "text" ? "assistant" : "reasoning"
+      const wasKnown = data.part.has(part.id)
+      if (!wasKnown) {
+        data.part.set(part.id, kind)
+        commits.push({
+          kind: kind === "assistant" ? "assistant" : "reasoning",
+          text: `[${kind}]`,
+          phase: "start",
+          source: kind,
+          partID: part.id,
+        })
       }
 
-      if (data.ids.has(part.id)) {
-        return out(data, commits)
+      data.text.set(part.id, part.text)
+      flushPart(data, commits, part.id, !!part.time?.end)
+
+      if (part.time?.end) {
+        data.ids.add(part.id)
+        data.part.delete(part.id)
+        data.text.delete(part.id)
+        data.sent.delete(part.id)
       }
 
-      data.ids.add(part.id)
-      const text = mergeDelta(data, part.id, part.text).trim()
-      if (!input.thinking || !text) {
-        return out(data, commits)
-      }
-
-      commits.push({
-        kind: "reasoning",
-        text,
-      })
       return out(data, commits)
     }
 
@@ -322,6 +385,8 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
     commits.push({
       kind: "error",
       text: formatSessionError(event.properties.error),
+      phase: "start",
+      source: "system",
     })
     return out(data, commits)
   }

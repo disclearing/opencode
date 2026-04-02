@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { pickVariant, queueSplash, resolveVariant, runPromptQueue } from "../../../src/cli/cmd/run/runtime"
-import type { EntryKind, FooterApi, FooterPatch } from "../../../src/cli/cmd/run/types"
+import type { FooterApi, FooterPatch, StreamCommit } from "../../../src/cli/cmd/run/types"
 
 function createFooter() {
   const prompts = new Set<(text: string) => void>()
   const closes = new Set<() => void>()
   const patched: FooterPatch[] = []
-  const appended: Array<{ kind: EntryKind; text: string }> = []
+  const appended: StreamCommit[] = []
   let closed = false
 
   const close = () => {
@@ -44,8 +44,8 @@ function createFooter() {
     patch(next) {
       patched.push(next)
     },
-    append(kind, text) {
-      appended.push({ kind, text })
+    append(commit) {
+      appended.push(commit)
     },
     close,
     destroy() {
@@ -294,8 +294,8 @@ describe("run runtime", () => {
 
     expect(prompts).toEqual(["one", "two"])
     expect(ui.appended).toEqual([
-      { kind: "user", text: "one" },
-      { kind: "user", text: "two" },
+      { kind: "user", text: "one", phase: "start", source: "system" },
+      { kind: "user", text: "two", phase: "start", source: "system" },
     ])
   })
 
@@ -325,7 +325,7 @@ describe("run runtime", () => {
     await queue
 
     expect(prompts).toEqual(["one"])
-    expect(ui.appended).toEqual([{ kind: "user", text: "one" }])
+    expect(ui.appended).toEqual([{ kind: "user", text: "one", phase: "start", source: "system" }])
     expect(ui.patched).toContainEqual({
       phase: "idle",
       status: "",
@@ -401,7 +401,7 @@ describe("run runtime", () => {
     })
 
     expect(prompts).toEqual(["  hello  "])
-    expect(ui.appended).toEqual([{ kind: "user", text: "  hello  " }])
+    expect(ui.appended).toEqual([{ kind: "user", text: "  hello  ", phase: "start", source: "system" }])
   })
 
   test("treats initial /exit as close command", async () => {

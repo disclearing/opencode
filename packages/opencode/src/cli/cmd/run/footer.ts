@@ -5,7 +5,7 @@ import { Keybind } from "../../../util/keybind"
 import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
 import { entryWriter, normalizeEntry } from "./scrollback"
 import type { RunTheme } from "./theme"
-import type { EntryKind, FooterApi, FooterKeybinds, FooterPatch, FooterState } from "./types"
+import type { FooterApi, FooterKeybinds, FooterPatch, FooterState, StreamCommit } from "./types"
 
 type CycleResult = {
   modelLabel?: string
@@ -136,16 +136,16 @@ export class RunFooter implements FooterApi {
     this.setState(state)
   }
 
-  public append(kind: EntryKind, text: string): void {
+  public append(commit: StreamCommit): void {
     if (this.destroyed || this.renderer.isDestroyed) {
       return
     }
 
-    if (!normalizeEntry(kind, text).trim()) {
+    if (!normalizeEntry(commit)) {
       return
     }
 
-    this.renderer.writeToScrollback(entryWriter(kind, text, this.options.theme.entry))
+    this.renderer.writeToScrollback(entryWriter(commit, this.options.theme.entry))
     this.scheduleSettleRender()
   }
 
