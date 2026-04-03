@@ -89,11 +89,10 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         })
         data = next.data
 
-        if (next.commits.length > 0 || next.status || next.usage) {
+        if (next.commits.length > 0 || next.footer?.patch || next.footer?.view) {
           log?.write("reduce.output", {
             commits: next.commits,
-            status: next.status,
-            usage: next.usage,
+            footer: next.footer,
           })
         }
 
@@ -102,24 +101,20 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
           input.footer.append(commit)
         }
 
-        if (next.status) {
-          log?.write("ui.patch", {
-            phase: "running",
-            status: next.status,
-          })
-          input.footer.patch({
-            phase: "running",
-            status: next.status,
-          })
+        if (next.footer?.patch) {
+          const patch =
+            typeof next.footer.patch.status === "string" && next.footer.patch.phase === undefined
+              ? { phase: "running" as const, ...next.footer.patch }
+              : next.footer.patch
+          log?.write("ui.patch", patch)
+          input.footer.patch(patch)
         }
 
-        if (next.usage) {
+        if (next.footer?.view) {
           log?.write("ui.patch", {
-            usage: next.usage,
+            view: next.footer.view,
           })
-          input.footer.patch({
-            usage: next.usage,
-          })
+          input.footer.present(next.footer.view)
         }
 
         if (

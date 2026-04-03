@@ -12,50 +12,52 @@ function reduce(data: ReturnType<typeof createSessionData>, event: unknown, thin
   })
 }
 
-describe("session data reducer", () => {
-  test("repeated finalized part commits once", () => {
-    const evt = {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "txt-1",
-          sessionID: "session-1",
-          type: "text",
-          text: "assistant reply",
-          time: { end: Date.now() },
+function assistant(id: string, extra: Record<string, unknown> = {}) {
+  return {
+    type: "message.updated",
+    properties: {
+      sessionID: "session-1",
+      info: {
+        id,
+        role: "assistant",
+        agent: "main-agent",
+        modelID: "main-model",
+        providerID: "openai",
+        tokens: {
+          input: 1,
+          output: 1,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
         },
+        ...extra,
       },
-    }
+    },
+  }
+}
 
-    let data = createSessionData()
-    const first = reduce(data, evt)
-    expect(first.commits).toEqual([{ kind: "assistant", text: "assistant reply" }])
-
-    data = first.data
-    const next = reduce(data, evt)
-    expect(next.commits).toEqual([])
-  })
-
-  test("delta then final update emits one commit", () => {
+describe("session data reducer", () => {
+  test("buffers delta until part kind is known", () => {
     let data = createSessionData()
 
-    const delta = reduce(data, {
+    data = reduce(data, {
       type: "message.part.delta",
       properties: {
         sessionID: "session-1",
         messageID: "msg-1",
         partID: "txt-1",
         field: "text",
-        delta: "from delta",
+        delta: "hello",
       },
-    })
+    }).data
 
-    data = delta.data
-    const final = reduce(data, {
+    data = reduce(data, assistant("msg-1")).data
+
+    const out = reduce(data, {
       type: "message.part.updated",
       properties: {
         part: {
           id: "txt-1",
+          messageID: "msg-1",
           sessionID: "session-1",
           type: "text",
           text: "",
@@ -64,67 +66,19 @@ describe("session data reducer", () => {
       },
     })
 
-    expect(final.commits).toEqual([{ kind: "assistant", text: "from delta" }])
-  })
-
-  test("duplicate deltas keep finalized text", () => {
-    let data = createSessionData()
-
-    data = reduce(data, {
-      type: "message.part.delta",
-      properties: {
-        sessionID: "session-1",
+    expect(out.commits).toEqual([
+      {
+        kind: "assistant",
+        text: "hello",
+        phase: "progress",
+        source: "assistant",
         messageID: "msg-1",
         partID: "txt-1",
-        field: "text",
-        delta: "hello",
       },
-    }).data
-
-    data = reduce(data, {
-      type: "message.part.delta",
-      properties: {
-        sessionID: "session-1",
-        messageID: "msg-1",
-        partID: "txt-1",
-        field: "text",
-        delta: "hello",
-      },
-    }).data
-
-    const out = reduce(data, {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "txt-1",
-          sessionID: "session-1",
-          type: "text",
-          text: "hello",
-          time: { end: Date.now() },
-        },
-      },
-    })
-
-    expect(out.commits).toEqual([{ kind: "assistant", text: "hello" }])
+    ])
   })
 
-  test("ignores non-text deltas", () => {
-    const out = reduce(createSessionData(), {
-      type: "message.part.delta",
-      properties: {
-        sessionID: "session-1",
-        messageID: "msg-1",
-        partID: "txt-1",
-        field: "input",
-        delta: "ignored",
-      },
-    })
-
-    expect(out.commits).toEqual([])
-    expect(out.data.delta.size).toBe(0)
-  })
-
-  test("ignores stale deltas after part finalized", () => {
+  test("replays buffered assistant part once role is known", () => {
     let data = createSessionData()
 
     data = reduce(data, {
@@ -132,37 +86,97 @@ describe("session data reducer", () => {
       properties: {
         part: {
           id: "txt-1",
+          messageID: "msg-1",
           sessionID: "session-1",
           type: "text",
-          text: "done",
+          text: "hello after role",
+          time: { end: Date.now() },
+        },
+      },
+    }).data
+
+    const out = reduce(data, assistant("msg-1"))
+
+    expect(out.commits).toEqual([
+      {
+        kind: "assistant",
+        text: "hello after role",
+        phase: "progress",
+        source: "assistant",
+        messageID: "msg-1",
+        partID: "txt-1",
+      },
+    ])
+    expect(out.footer).toEqual({
+      patch: { status: "assistant responding", usage: "2" },
+      view: undefined,
+    })
+  })
+
+  test("drops synced user parts when role arrives later", () => {
+    let data = createSessionData()
+
+    data = reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "txt-user-1",
+          messageID: "msg-user-1",
+          sessionID: "session-1",
+          type: "text",
+          text: "HELLO",
           time: { end: Date.now() },
         },
       },
     }).data
 
     const out = reduce(data, {
-      type: "message.part.delta",
+      type: "message.updated",
       properties: {
         sessionID: "session-1",
-        messageID: "msg-1",
-        partID: "txt-1",
-        field: "text",
-        delta: "late",
+        info: {
+          id: "msg-user-1",
+          role: "user",
+        },
       },
     })
 
     expect(out.commits).toEqual([])
-    expect(out.data.delta.size).toBe(0)
+    expect(out.data.ids.has("txt-user-1")).toBe(true)
   })
 
-  test("tool running then completed success stays status-only", () => {
+  test("suppresses reasoning when thinking is disabled", () => {
+    const out = reduce(
+      createSessionData(),
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "reason-1",
+            messageID: "msg-1",
+            sessionID: "session-1",
+            type: "reasoning",
+            text: "hidden",
+            time: { end: Date.now() },
+          },
+        },
+      },
+      false,
+    )
+
+    expect(out.commits).toEqual([])
+    expect(out.data.ids.has("reason-1")).toBe(true)
+  })
+
+  test("emits tool lifecycle in stable order", () => {
     let data = createSessionData()
 
-    const running = reduce(data, {
+    const run = reduce(data, {
       type: "message.part.updated",
       properties: {
         part: {
           id: "tool-1",
+          messageID: "msg-1",
           sessionID: "session-1",
           type: "tool",
           tool: "task",
@@ -176,15 +190,29 @@ describe("session data reducer", () => {
       },
     })
 
-    expect(running.commits).toEqual([])
-    expect(running.status).toBe("running investigate")
+    expect(run.commits).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        text: "[tool:task] running investigate",
+        phase: "start",
+        source: "tool",
+        messageID: "msg-1",
+        partID: "tool-1",
+        tool: "task",
+      }),
+    ])
+    expect(run.footer).toEqual({
+      patch: { status: "running investigate" },
+      view: undefined,
+    })
 
-    data = running.data
+    data = run.data
     const done = reduce(data, {
       type: "message.part.updated",
       properties: {
         part: {
           id: "tool-1",
+          messageID: "msg-1",
           sessionID: "session-1",
           type: "tool",
           tool: "task",
@@ -192,7 +220,7 @@ describe("session data reducer", () => {
             status: "completed",
             input: {},
             output: "ok",
-            title: "task",
+            title: "done",
             metadata: {},
             time: { start: 1, end: 2 },
           },
@@ -200,80 +228,36 @@ describe("session data reducer", () => {
       },
     })
 
-    expect(done.commits).toEqual([])
+    expect(done.commits).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        text: "ok",
+        phase: "progress",
+        source: "tool",
+        messageID: "msg-1",
+        partID: "tool-1",
+        tool: "task",
+      }),
+      expect.objectContaining({
+        kind: "tool",
+        text: "[tool:task:end]",
+        phase: "final",
+        source: "tool",
+        messageID: "msg-1",
+        partID: "tool-1",
+        tool: "task",
+      }),
+    ])
   })
 
-  test("replayed running tool after completion is ignored", () => {
+  test("emits tool error once", () => {
     let data = createSessionData()
-
-    data = reduce(data, {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "tool-1",
-          sessionID: "session-1",
-          type: "tool",
-          tool: "task",
-          state: {
-            status: "running",
-            input: {
-              description: "investigate",
-            },
-          },
-        },
-      },
-    }).data
-
-    data = reduce(data, {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "tool-1",
-          sessionID: "session-1",
-          type: "tool",
-          tool: "task",
-          state: {
-            status: "completed",
-            input: {},
-            output: "ok",
-            title: "task",
-            metadata: {},
-            time: { start: 1, end: 2 },
-          },
-        },
-      },
-    }).data
-
-    const out = reduce(data, {
-      type: "message.part.updated",
-      properties: {
-        part: {
-          id: "tool-1",
-          sessionID: "session-1",
-          type: "tool",
-          tool: "task",
-          state: {
-            status: "running",
-            input: {
-              description: "investigate",
-            },
-          },
-        },
-      },
-    })
-
-    expect(out.status).toBeUndefined()
-    expect(out.commits).toEqual([])
-  })
-
-  test("tool error emits one commit", () => {
-    let data = createSessionData()
-
     const evt = {
       type: "message.part.updated",
       properties: {
         part: {
           id: "tool-err",
+          messageID: "msg-1",
           sessionID: "session-1",
           type: "tool",
           tool: "bash",
@@ -290,69 +274,75 @@ describe("session data reducer", () => {
     }
 
     const first = reduce(data, evt)
-    expect(first.commits).toEqual([{ kind: "error", text: "bash: boom" }])
+    expect(first.commits).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        text: "[tool:bash:error] boom",
+        phase: "final",
+        source: "tool",
+        messageID: "msg-1",
+        partID: "tool-err",
+        tool: "bash",
+      }),
+    ])
 
     data = first.data
     const next = reduce(data, evt)
     expect(next.commits).toEqual([])
   })
 
-  test("reasoning commits as reasoning kind", () => {
-    const out = reduce(
-      createSessionData(),
-      {
-        type: "message.part.updated",
-        properties: {
-          part: {
-            id: "reason-1",
-            sessionID: "session-1",
-            type: "reasoning",
-            text: "step",
-            time: { start: 1, end: 2 },
-          },
-        },
-      },
-      true,
-    )
-
-    expect(out.commits).toEqual([{ kind: "reasoning", text: "step" }])
-  })
-
-  test("thinking disabled clears finalized reasoning delta", () => {
+  test("emits assistant message error after pending part flush", () => {
     let data = createSessionData()
 
     data = reduce(data, {
-      type: "message.part.delta",
-      properties: {
-        sessionID: "session-1",
-        messageID: "msg-1",
-        partID: "reason-1",
-        field: "text",
-        delta: "hidden",
-      },
-    }).data
-
-    expect(data.delta.size).toBe(1)
-
-    const out = reduce(data, {
       type: "message.part.updated",
       properties: {
         part: {
-          id: "reason-1",
+          id: "txt-1",
+          messageID: "msg-1",
           sessionID: "session-1",
-          type: "reasoning",
-          text: "",
-          time: { start: 1, end: 2 },
+          type: "text",
+          text: "hello",
+          time: { end: Date.now() },
         },
       },
-    })
+    }).data
 
-    expect(out.commits).toEqual([])
-    expect(out.data.delta.size).toBe(0)
+    const out = reduce(
+      data,
+      assistant("msg-1", {
+        error: {
+          name: "UnknownError",
+          data: {
+            message: "boom",
+          },
+        },
+      }),
+    )
+
+    expect(out.commits).toEqual([
+      {
+        kind: "assistant",
+        text: "hello",
+        phase: "progress",
+        source: "assistant",
+        messageID: "msg-1",
+        partID: "txt-1",
+      },
+      {
+        kind: "error",
+        text: "boom",
+        phase: "start",
+        source: "system",
+        messageID: "msg-1",
+      },
+    ])
   })
 
-  test("permission asked updates status only", () => {
-    const out = reduce(createSessionData(), {
+  test("permission and question events stay footer-only with permission precedence", () => {
+    let data = createSessionData()
+
+    const perm = reduce(data, {
       type: "permission.asked",
       properties: {
         id: "perm-1",
@@ -364,30 +354,97 @@ describe("session data reducer", () => {
       },
     })
 
-    expect(out.commits).toEqual([])
-    expect(out.status).toBe("permission requested: read (/tmp/file.txt); auto-rejecting")
+    expect(perm.commits).toEqual([])
+    expect(perm.footer).toEqual({
+      patch: { status: "awaiting permission" },
+      view: {
+        type: "permission",
+        request: expect.objectContaining({ id: "perm-1" }),
+      },
+    })
+
+    data = perm.data
+    const ask = reduce(data, {
+      type: "question.asked",
+      properties: {
+        id: "question-1",
+        sessionID: "session-1",
+        questions: [
+          {
+            question: "Mode?",
+            header: "Mode",
+            options: [{ label: "chunked", description: "Incremental output" }],
+            multiple: false,
+          },
+        ],
+      },
+    })
+
+    expect(ask.commits).toEqual([])
+    expect(ask.footer).toEqual({
+      patch: { status: "awaiting permission" },
+      view: {
+        type: "permission",
+        request: expect.objectContaining({ id: "perm-1" }),
+      },
+    })
+
+    data = ask.data
+    const replied = reduce(data, {
+      type: "permission.replied",
+      properties: {
+        sessionID: "session-1",
+        requestID: "perm-1",
+        reply: "reject",
+      },
+    })
+
+    expect(replied.commits).toEqual([])
+    expect(replied.footer).toEqual({
+      patch: { status: "awaiting answer" },
+      view: {
+        type: "question",
+        request: expect.objectContaining({ id: "question-1" }),
+      },
+    })
+
+    data = replied.data
+    const rejected = reduce(data, {
+      type: "question.rejected",
+      properties: {
+        sessionID: "session-1",
+        requestID: "question-1",
+      },
+    })
+
+    expect(rejected.commits).toEqual([])
+    expect(rejected.footer).toEqual({
+      patch: { status: "" },
+      view: { type: "prompt" },
+    })
   })
 
-  test("other-session events are ignored", () => {
-    const data = createSessionData()
-    const out = reduce(data, {
-      type: "message.updated",
+  test("session errors stay in transcript", () => {
+    const out = reduce(createSessionData(), {
+      type: "session.error",
       properties: {
-        sessionID: "other",
-        info: {
-          role: "assistant",
-          agent: "agent",
-          modelID: "model",
-          providerID: "provider",
-          tokens: { input: 1, output: 1, reasoning: 1, cache: { read: 0, write: 0 } },
-          cost: 0,
+        sessionID: "session-1",
+        error: {
+          name: "UnknownError",
+          data: {
+            message: "permission denied",
+          },
         },
       },
     })
 
-    expect(out.commits).toEqual([])
-    expect(out.status).toBeUndefined()
-    expect(out.usage).toBeUndefined()
-    expect(out.data.announced).toBe(false)
+    expect(out.commits).toEqual([
+      {
+        kind: "error",
+        text: "permission denied",
+        phase: "start",
+        source: "system",
+      },
+    ])
   })
 })

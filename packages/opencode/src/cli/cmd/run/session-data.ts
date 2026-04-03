@@ -1,6 +1,6 @@
-import type { Event, ToolPart } from "@opencode-ai/sdk/v2"
+import type { Event, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../../util/locale"
-import type { StreamCommit } from "./types"
+import type { FooterOutput, FooterPatch, FooterView, StreamCommit } from "./types"
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -23,15 +23,18 @@ type MessageRole = "assistant" | "user"
 export type SessionCommit = StreamCommit
 
 export type SessionData = {
+  announced: boolean
   ids: Set<string>
   tools: Set<string>
-  announced: boolean
+  permissions: PermissionRequest[]
+  questions: QuestionRequest[]
   role: Map<string, MessageRole>
   msg: Map<string, string>
-  end: Set<string>
+  part: Map<string, PartKind>
   text: Map<string, string>
   sent: Map<string, number>
-  part: Map<string, PartKind>
+  end: Set<string>
+  echo: Map<string, Set<string>>
 }
 
 export type SessionDataInput = {
@@ -45,21 +48,23 @@ export type SessionDataInput = {
 export type SessionDataOutput = {
   data: SessionData
   commits: SessionCommit[]
-  status?: string
-  usage?: string
+  footer?: FooterOutput
 }
 
 export function createSessionData(): SessionData {
   return {
+    announced: false,
     ids: new Set(),
     tools: new Set(),
-    announced: false,
+    permissions: [],
+    questions: [],
     role: new Map(),
     msg: new Map(),
-    end: new Set(),
+    part: new Map(),
     text: new Map(),
     sent: new Map(),
-    part: new Map(),
+    end: new Set(),
+    echo: new Map(),
   }
 }
 
@@ -96,8 +101,9 @@ function formatUsage(
   return text
 }
 
-function formatSessionError(error: {
-  name: string
+function formatError(error: {
+  name?: string
+  message?: string
   data?: {
     message?: string
   }
@@ -106,7 +112,105 @@ function formatSessionError(error: {
     return String(error.data.message)
   }
 
-  return String(error.name)
+  if (error.message) {
+    return String(error.message)
+  }
+
+  if (error.name) {
+    return String(error.name)
+  }
+
+  return "unknown error"
+}
+
+function isAbort(error: { name?: string } | undefined): boolean {
+  return error?.name === "MessageAbortedError"
+}
+
+function msgErr(id: string): string {
+  return `msg:${id}:error`
+}
+
+function patch(patch?: FooterPatch, view?: FooterView): FooterOutput | undefined {
+  if (!patch && !view) {
+    return
+  }
+
+  return {
+    patch,
+    view,
+  }
+}
+
+function out(data: SessionData, commits: SessionCommit[], footer?: FooterOutput): SessionDataOutput {
+  if (!footer) {
+    return {
+      data,
+      commits,
+    }
+  }
+
+  return {
+    data,
+    commits,
+    footer,
+  }
+}
+
+function pickView(data: SessionData): FooterView {
+  const permission = data.permissions[0]
+  if (permission) {
+    return { type: "permission", request: permission }
+  }
+
+  const question = data.questions[0]
+  if (question) {
+    return { type: "question", request: question }
+  }
+
+  return { type: "prompt" }
+}
+
+function queueFooter(data: SessionData): FooterOutput {
+  const view = pickView(data)
+  if (view.type === "permission") {
+    return {
+      view,
+      patch: { status: "awaiting permission" },
+    }
+  }
+
+  if (view.type === "question") {
+    return {
+      view,
+      patch: { status: "awaiting answer" },
+    }
+  }
+
+  return {
+    view,
+    patch: { status: "" },
+  }
+}
+
+function upsert<T extends { id: string }>(list: T[], item: T) {
+  const idx = list.findIndex((entry) => entry.id === item.id)
+  if (idx === -1) {
+    list.push(item)
+    return
+  }
+
+  list[idx] = item
+}
+
+function remove<T extends { id: string }>(list: T[], id: string): boolean {
+  const idx = list.findIndex((entry) => entry.id === id)
+  if (idx === -1) {
+    return false
+  }
+
+  list.splice(idx, 1)
+  return true
 }
 
 function toolStatus(part: ToolPart): string {
@@ -133,37 +237,114 @@ function toolStatus(part: ToolPart): string {
   return "running task"
 }
 
-export function flushPart(
-  data: SessionData,
-  commits: SessionCommit[],
-  partID: string,
-  _end: boolean,
-  interrupted: boolean = false,
-) {
+function ready(data: SessionData, partID: string): boolean {
+  const msg = data.msg.get(partID)
+  if (!msg) {
+    return true
+  }
+
+  const role = data.role.get(msg)
+  if (!role) {
+    return false
+  }
+
+  return role === "assistant"
+}
+
+function syncText(data: SessionData, partID: string, next: string) {
+  const prev = data.text.get(partID) ?? ""
+  if (!next) {
+    return prev
+  }
+
+  if (!prev || next.length >= prev.length) {
+    data.text.set(partID, next)
+    return next
+  }
+
+  return prev
+}
+
+function stashEcho(data: SessionData, part: ToolPart) {
+  if (part.tool !== "bash") {
+    return
+  }
+
+  if (typeof part.messageID !== "string" || !part.messageID) {
+    return
+  }
+
+  const output = (part.state as { output?: unknown }).output
+  if (typeof output !== "string") {
+    return
+  }
+
+  const text = output.replace(/^\n+/, "")
+  if (!text.trim()) {
+    return
+  }
+
+  const set = data.echo.get(part.messageID) ?? new Set<string>()
+  set.add(text)
+  const trim = text.replace(/\n+$/, "")
+  if (trim && trim !== text) {
+    set.add(trim)
+  }
+  data.echo.set(part.messageID, set)
+}
+
+function stripEcho(data: SessionData, msg: string | undefined, chunk: string): string {
+  if (!msg) {
+    return chunk
+  }
+
+  const set = data.echo.get(msg)
+  if (!set || set.size === 0) {
+    return chunk
+  }
+
+  data.echo.delete(msg)
+  const list = [...set].sort((a, b) => b.length - a.length)
+  for (const item of list) {
+    if (!item || !chunk.startsWith(item)) {
+      continue
+    }
+
+    return chunk.slice(item.length).replace(/^\n+/, "")
+  }
+
+  return chunk
+}
+
+export function flushPart(data: SessionData, commits: SessionCommit[], partID: string, interrupted = false) {
   const kind = data.part.get(partID)
-  if (!kind) return
+  if (!kind) {
+    return
+  }
 
   const text = data.text.get(partID) ?? ""
   const sent = data.sent.get(partID) ?? 0
-  const raw = text.slice(sent)
-  let chunk = raw
-  if (sent === 0 && (kind === "assistant" || kind === "reasoning")) {
+  let chunk = text.slice(sent)
+  const msg = data.msg.get(partID)
+
+  if (sent === 0) {
     chunk = chunk.replace(/^\n+/, "")
-    if (chunk) {
-      chunk = `\n${chunk}`
+    if (kind === "reasoning" && chunk) {
+      chunk = `Thinking: ${chunk.replace(/\[REDACTED\]/g, "")}`
+    }
+    if (kind === "assistant" && chunk) {
+      chunk = stripEcho(data, msg, chunk)
     }
   }
 
-  if (raw) {
-    data.sent.set(partID, text.length)
-  }
-
   if (chunk) {
+    data.sent.set(partID, text.length)
     commits.push({
-      kind: kind === "assistant" ? "assistant" : "reasoning",
+      kind,
       text: chunk,
       phase: "progress",
       source: kind,
+      messageID: msg,
       partID,
     })
   }
@@ -173,10 +354,11 @@ export function flushPart(
   }
 
   commits.push({
-    kind: kind === "assistant" ? "assistant" : "reasoning",
+    kind,
     text: `[${kind}:interrupted]`,
     phase: "final",
     source: kind,
+    messageID: msg,
     partID,
   })
 }
@@ -214,43 +396,69 @@ function replay(data: SessionData, commits: SessionCommit[], messageID: string, 
       continue
     }
 
-    flushPart(data, commits, partID, false)
+    flushPart(data, commits, partID)
 
-    if (data.end.has(partID)) {
-      data.ids.add(partID)
-      drop(data, partID)
+    if (!data.end.has(partID)) {
+      continue
     }
+
+    data.ids.add(partID)
+    drop(data, partID)
+  }
+}
+
+function startTool(part: ToolPart): SessionCommit {
+  return {
+    kind: "tool",
+    text: `[tool:${part.tool}] ${toolStatus(part)}`,
+    phase: "start",
+    source: "tool",
+    messageID: part.messageID,
+    partID: part.id,
+    tool: part.tool,
+    part,
+  }
+}
+
+function doneTool(part: ToolPart): SessionCommit {
+  return {
+    kind: "tool",
+    text: `[tool:${part.tool}:end]`,
+    phase: "final",
+    source: "tool",
+    messageID: part.messageID,
+    partID: part.id,
+    tool: part.tool,
+    part,
+  }
+}
+
+function failTool(part: ToolPart, text: string): SessionCommit {
+  return {
+    kind: "tool",
+    text: `[tool:${part.tool}:error] ${text}`,
+    phase: "final",
+    source: "tool",
+    messageID: part.messageID,
+    partID: part.id,
+    tool: part.tool,
+    part,
   }
 }
 
 export function flushInterrupted(data: SessionData, commits: SessionCommit[]) {
   for (const partID of data.part.keys()) {
-    if (!data.ids.has(partID)) {
-      const msg = data.msg.get(partID)
-      if (msg && data.role.get(msg) !== "assistant") {
-        continue
-      }
-
-      flushPart(data, commits, partID, false, true)
+    if (data.ids.has(partID)) {
+      continue
     }
-  }
-}
 
-function out(data: SessionData, commits: SessionCommit[], status?: string, usage?: string): SessionDataOutput {
-  const next: SessionDataOutput = {
-    data,
-    commits,
-  }
+    const msg = data.msg.get(partID)
+    if (msg && data.role.get(msg) === "user") {
+      continue
+    }
 
-  if (typeof status === "string") {
-    next.status = status
+    flushPart(data, commits, partID, true)
   }
-
-  if (typeof usage === "string") {
-    next.usage = usage
-  }
-
-  return next
 }
 
 export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
@@ -268,19 +476,41 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       data.role.set(info.id, info.role)
       replay(data, commits, info.id, info.role, input.thinking)
     }
+
     if (info.role !== "assistant") {
       return out(data, commits)
     }
 
-    const status = data.announced ? undefined : "assistant responding"
-    data.announced = true
+    let next: FooterPatch | undefined
+    if (!data.announced) {
+      data.announced = true
+      next = { status: "assistant responding" }
+    }
+
     const usage = formatUsage(
       info.tokens,
       input.limits[modelKey(info.providerID, info.modelID)],
       typeof info.cost === "number" ? info.cost : undefined,
     )
+    if (usage) {
+      next = {
+        ...(next ?? {}),
+        usage,
+      }
+    }
 
-    return out(data, commits, status, usage)
+    if (typeof info.id === "string" && info.error && !isAbort(info.error) && !data.ids.has(msgErr(info.id))) {
+      data.ids.add(msgErr(info.id))
+      commits.push({
+        kind: "error",
+        text: formatError(info.error),
+        phase: "start",
+        source: "system",
+        messageID: info.id,
+      })
+    }
+
+    return out(data, commits, patch(next))
   }
 
   if (event.type === "message.part.delta") {
@@ -305,14 +535,27 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    const current = data.text.get(partID) ?? ""
-    data.text.set(partID, current + event.properties.delta)
-
-    const kind = data.part.get(partID)
-    if (kind) {
-      flushPart(data, commits, partID, false)
+    if (typeof event.properties.messageID === "string") {
+      data.msg.set(partID, event.properties.messageID)
     }
 
+    const text = data.text.get(partID) ?? ""
+    data.text.set(partID, text + event.properties.delta)
+
+    const kind = data.part.get(partID)
+    if (!kind) {
+      return out(data, commits)
+    }
+
+    if (kind === "reasoning" && !input.thinking) {
+      return out(data, commits)
+    }
+
+    if (!ready(data, partID)) {
+      return out(data, commits)
+    }
+
+    flushPart(data, commits, partID)
     return out(data, commits)
   }
 
@@ -327,21 +570,12 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         return out(data, commits)
       }
 
-      if (data.tools.has(part.id)) {
-        return out(data, commits)
+      if (!data.tools.has(part.id)) {
+        data.tools.add(part.id)
+        commits.push(startTool(part))
       }
 
-      data.tools.add(part.id)
-      commits.push({
-        kind: "tool",
-        text: `[tool:${part.tool}] ${toolStatus(part)}`,
-        phase: "start",
-        source: "tool",
-        partID: part.id,
-        tool: part.tool,
-        part,
-      })
-      return out(data, commits, toolStatus(part))
+      return out(data, commits, patch({ status: toolStatus(part) }))
     }
 
     if (part.type === "tool" && part.state.status === "completed") {
@@ -352,18 +586,11 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       if (!seen) {
-        commits.push({
-          kind: "tool",
-          text: `[tool:${part.tool}] ${toolStatus(part)}`,
-          phase: "start",
-          source: "tool",
-          partID: part.id,
-          tool: part.tool,
-          part,
-        })
+        commits.push(startTool(part))
       }
 
       data.ids.add(part.id)
+      stashEcho(data, part)
 
       const output = part.state.output
       if (typeof output === "string" && output.trim()) {
@@ -372,22 +599,14 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           text: output,
           phase: "progress",
           source: "tool",
+          messageID: part.messageID,
           partID: part.id,
           tool: part.tool,
           part,
         })
       }
 
-      commits.push({
-        kind: "tool",
-        text: `[tool:${part.tool}:end]`,
-        phase: "final",
-        source: "tool",
-        partID: part.id,
-        tool: part.tool,
-        part,
-      })
-
+      commits.push(doneTool(part))
       return out(data, commits)
     }
 
@@ -398,80 +617,63 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       }
 
       data.ids.add(part.id)
-      const errorText = part.state.error ?? "unknown error"
-      commits.push({
-        kind: "tool",
-        text: `[tool:${part.tool}:error] ${errorText}`,
-        phase: "final",
-        source: "tool",
-        partID: part.id,
-        tool: part.tool,
-        part,
-      })
-
+      const text = typeof part.state.error === "string" && part.state.error.trim() ? part.state.error : "unknown error"
+      commits.push(failTool(part, text))
       return out(data, commits)
     }
 
-    if (part.type === "text" || part.type === "reasoning") {
-      if (data.ids.has(part.id)) {
-        return out(data, commits)
-      }
+    if (part.type !== "text" && part.type !== "reasoning") {
+      return out(data, commits)
+    }
 
-      const kind = part.type === "text" ? "assistant" : "reasoning"
-      const msg = part.messageID
-      if (typeof msg === "string") {
-        data.msg.set(part.id, msg)
-        const role = data.role.get(msg)
-        if (role === "user") {
-          data.ids.add(part.id)
-          drop(data, part.id)
-          return out(data, commits)
-        }
+    if (data.ids.has(part.id)) {
+      return out(data, commits)
+    }
 
-        if (!role) {
-          if (kind === "reasoning" && !input.thinking) {
-            if (part.time?.end) {
-              data.ids.add(part.id)
-            }
-            return out(data, commits)
-          }
+    const kind = part.type === "text" ? "assistant" : "reasoning"
+    if (typeof part.messageID === "string") {
+      data.msg.set(part.id, part.messageID)
+    }
 
-          if (!data.part.has(part.id)) {
-            data.part.set(part.id, kind)
-          }
+    const msg = part.messageID
+    const role = msg ? data.role.get(msg) : undefined
+    if (role === "user") {
+      data.ids.add(part.id)
+      drop(data, part.id)
+      return out(data, commits)
+    }
 
-          data.text.set(part.id, part.text)
-          if (part.time?.end) {
-            data.end.add(part.id)
-          }
-          return out(data, commits)
-        }
-      }
-
-      if (kind === "reasoning" && !input.thinking) {
-        if (part.time?.end) {
-          data.ids.add(part.id)
-          drop(data, part.id)
-        }
-        return out(data, commits)
-      }
-
-      const wasKnown = data.part.has(part.id)
-      if (!wasKnown) {
-        data.part.set(part.id, kind)
-      }
-
-      data.text.set(part.id, part.text)
-      flushPart(data, commits, part.id, !!part.time?.end)
-
+    if (kind === "reasoning" && !input.thinking) {
       if (part.time?.end) {
         data.ids.add(part.id)
-        drop(data, part.id)
       }
-
+      drop(data, part.id)
       return out(data, commits)
     }
 
+    data.part.set(part.id, kind)
+    syncText(data, part.id, part.text)
+
+    if (part.time?.end) {
+      data.end.add(part.id)
+    }
+
+    if (msg && !role) {
+      return out(data, commits)
+    }
+
+    if (!ready(data, part.id)) {
+      return out(data, commits)
+    }
+
+    flushPart(data, commits, part.id)
+
+    if (!part.time?.end) {
+      return out(data, commits)
+    }
+
+    data.ids.add(part.id)
+    drop(data, part.id)
     return out(data, commits)
   }
 
@@ -480,11 +682,41 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    return out(
-      data,
-      commits,
-      `permission requested: ${event.properties.permission} (${event.properties.patterns.join(", ")}); auto-rejecting`,
-    )
+    upsert(data.permissions, event.properties)
+    return out(data, commits, queueFooter(data))
+  }
+
+  if (event.type === "permission.replied") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    if (!remove(data.permissions, event.properties.requestID)) {
+      return out(data, commits)
+    }
+
+    return out(data, commits, queueFooter(data))
+  }
+
+  if (event.type === "question.asked") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    upsert(data.questions, event.properties)
+    return out(data, commits, queueFooter(data))
+  }
+
+  if (event.type === "question.replied" || event.type === "question.rejected") {
+    if (event.properties.sessionID !== input.sessionID) {
+      return out(data, commits)
+    }
+
+    if (!remove(data.questions, event.properties.requestID)) {
+      return out(data, commits)
+    }
+
+    return out(data, commits, queueFooter(data))
   }
 
   if (event.type === "session.error") {
@@ -494,7 +726,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
     commits.push({
       kind: "error",
-      text: formatSessionError(event.properties.error),
+      text: formatError(event.properties.error),
       phase: "start",
       source: "system",
     })

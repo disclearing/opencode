@@ -49,6 +49,7 @@ type TurnOpt = Partial<Omit<Parameters<typeof runPromptTurn>[0], "sdk" | "sessio
 async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
   const patched: unknown[] = []
   const appended: unknown[] = []
+  const presented: unknown[] = []
 
   await runPromptTurn({
     sdk,
@@ -72,7 +73,9 @@ async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
       patch(next) {
         patched.push(next)
       },
-      present() {},
+      present(view) {
+        presented.push(view)
+      },
       append(commit) {
         appended.push(commit)
       },
@@ -87,6 +90,7 @@ async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
   return {
     patched,
     appended,
+    presented,
   }
 }
 
@@ -223,25 +227,17 @@ describe("run stream", () => {
     expect((promptCalls[0]?.payload as { parts: Array<{ type: string }> }).parts[0]?.type).toBe("file")
     expect((promptCalls[0]?.options as { signal?: AbortSignal }).signal).toBeInstanceOf(AbortSignal)
 
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "assistant responding",
-    })
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "running investigate",
-    })
-    expect(out.patched).toContainEqual({
-      usage: "125 (13%) · $2.31",
-    })
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "assistant responding" }))
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "running investigate" }))
+    expect(out.patched).toContainEqual(expect.objectContaining({ usage: "125 (13%) · $2.31" }))
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nassistant reply",
+        text: "assistant reply",
         phase: "progress",
         source: "assistant",
         partID: "txt-1",
-      },
+      }),
       expect.objectContaining({
         kind: "tool",
         text: "[tool:task] running investigate",
@@ -321,10 +317,13 @@ describe("run stream", () => {
       },
     ])
 
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "permission requested: read (/tmp/file.txt); auto-rejecting",
-    })
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "awaiting permission" }))
+    expect(out.presented).toContainEqual(
+      expect.objectContaining({
+        type: "permission",
+        request: expect.objectContaining({ id: "perm-1" }),
+      }),
+    )
 
     expect(out.appended).toEqual([
       {
@@ -422,18 +421,15 @@ describe("run stream", () => {
       },
     ])
 
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "assistant responding",
-    })
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "permission requested: read (/tmp/file.txt); auto-rejecting",
-    })
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "running investigate",
-    })
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "assistant responding" }))
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "awaiting permission" }))
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "running investigate" }))
+    expect(out.presented).toContainEqual(
+      expect.objectContaining({
+        type: "permission",
+        request: expect.objectContaining({ id: "perm-1" }),
+      }),
+    )
     expect(out.appended).toEqual([
       expect.objectContaining({
         kind: "tool",
@@ -508,10 +504,7 @@ describe("run stream", () => {
       },
     )
 
-    expect(out.patched).toContainEqual({
-      phase: "running",
-      status: "assistant responding",
-    })
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "assistant responding" }))
     expect(out.appended).toEqual([])
   })
 
@@ -575,13 +568,14 @@ describe("run stream", () => {
     ])
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nHello! How can I help you today?",
+        text: "Hello! How can I help you today?",
         phase: "progress",
         source: "assistant",
+        messageID: "msg-assistant-1",
         partID: "txt-assistant-1",
-      },
+      }),
     ])
   })
 
@@ -645,13 +639,14 @@ describe("run stream", () => {
     ])
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nHello! How can I help you today?",
+        text: "Hello! How can I help you today?",
         phase: "progress",
         source: "assistant",
+        messageID: "msg-assistant-1",
         partID: "txt-assistant-1",
-      },
+      }),
     ])
   })
 
@@ -692,13 +687,14 @@ describe("run stream", () => {
     ])
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nHello after role",
+        text: "Hello after role",
         phase: "progress",
         source: "assistant",
+        messageID: "msg-assistant-1",
         partID: "txt-assistant-1",
-      },
+      }),
     ])
   })
 
@@ -879,20 +875,20 @@ describe("run stream", () => {
     )
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nhel",
+        text: "hel",
         phase: "progress",
         source: "assistant",
         partID: "txt-1",
-      },
-      {
+      }),
+      expect.objectContaining({
         kind: "assistant",
         text: "lo",
         phase: "progress",
         source: "assistant",
         partID: "txt-1",
-      },
+      }),
     ])
   })
 
@@ -926,13 +922,13 @@ describe("run stream", () => {
     )
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nhello",
+        text: "hello",
         phase: "progress",
         source: "assistant",
         partID: "txt-1",
-      },
+      }),
     ])
   })
 
@@ -957,13 +953,13 @@ describe("run stream", () => {
     )
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nhello",
+        text: "hello",
         phase: "progress",
         source: "assistant",
         partID: "txt-1",
-      },
+      }),
     ])
   })
 
@@ -1041,20 +1037,20 @@ describe("run stream", () => {
     })
 
     expect(out.appended).toEqual([
-      {
+      expect.objectContaining({
         kind: "assistant",
-        text: "\nunfinished",
+        text: "unfinished",
         phase: "progress",
         source: "assistant",
         partID: "txt-1",
-      },
-      {
+      }),
+      expect.objectContaining({
         kind: "assistant",
         text: "[assistant:interrupted]",
         phase: "final",
         source: "assistant",
         partID: "txt-1",
-      },
+      }),
     ])
   })
 })
