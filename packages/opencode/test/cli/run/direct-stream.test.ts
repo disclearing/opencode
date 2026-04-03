@@ -458,6 +458,316 @@ describe("run stream", () => {
     ])
   })
 
+  test("does not emit transcript rows for question.asked", async () => {
+    const out = await turn(
+      client([
+        {
+          type: "question.asked",
+          properties: {
+            id: "question-1",
+            sessionID: "session-1",
+            questions: [
+              {
+                question: "Streaming mode",
+                header: "Mode",
+                options: [{ label: "chunked", description: "Incremental output" }],
+                multiple: false,
+              },
+            ],
+          },
+        },
+        idle(),
+      ]),
+    )
+
+    expect(out.appended).toEqual([])
+    expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "awaiting answer" }))
+    expect(out.presented).toContainEqual(
+      expect.objectContaining({
+        type: "question",
+        request: expect.objectContaining({ id: "question-1" }),
+      }),
+    )
+  })
+
+  test("permission keeps precedence until replied then reveals question view", async () => {
+    const replies: unknown[] = []
+
+    const out = await turn(
+      client(
+        [
+          {
+            type: "permission.asked",
+            properties: {
+              id: "perm-1",
+              sessionID: "session-1",
+              permission: "read",
+              patterns: ["/tmp/file.txt"],
+              metadata: {},
+              always: [],
+            },
+          },
+          {
+            type: "question.asked",
+            properties: {
+              id: "question-1",
+              sessionID: "session-1",
+              questions: [
+                {
+                  question: "Streaming mode",
+                  header: "Mode",
+                  options: [{ label: "chunked", description: "Incremental output" }],
+                  multiple: false,
+                },
+              ],
+            },
+          },
+          {
+            type: "permission.replied",
+            properties: {
+              sessionID: "session-1",
+              requestID: "perm-1",
+              reply: "reject",
+            },
+          },
+          idle(),
+        ],
+        {
+          reply: async (payload: unknown) => {
+            replies.push(payload)
+          },
+        },
+      ),
+    )
+
+    expect(replies).toEqual([
+      {
+        requestID: "perm-1",
+        reply: "reject",
+      },
+    ])
+    expect(out.appended).toEqual([])
+    expect(out.presented[0]).toEqual(
+      expect.objectContaining({
+        type: "permission",
+        request: expect.objectContaining({ id: "perm-1" }),
+      }),
+    )
+    expect(out.presented.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "question",
+        request: expect.objectContaining({ id: "question-1" }),
+      }),
+    )
+  })
+
+  test("emits assistant message error row for non-abort failures", async () => {
+    const out = await turn(
+      client([
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "txt-1",
+              messageID: "msg-1",
+              sessionID: "session-1",
+              type: "text",
+              text: "hello",
+              time: { end: Date.now() },
+            },
+          },
+        },
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-1",
+            info: {
+              id: "msg-1",
+              role: "assistant",
+              agent: "main-agent",
+              modelID: "main-model",
+              providerID: "openai",
+              tokens: {
+                input: 1,
+                output: 1,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              error: {
+                name: "UnknownError",
+                data: {
+                  message: "boom",
+                },
+              },
+            },
+          },
+        },
+        idle(),
+      ]),
+      { prompt: "hi" },
+    )
+
+    expect(out.appended).toEqual([
+      expect.objectContaining({
+        kind: "assistant",
+        text: "hello",
+        phase: "progress",
+        source: "assistant",
+        messageID: "msg-1",
+        partID: "txt-1",
+      }),
+      {
+        kind: "error",
+        text: "boom",
+        phase: "start",
+        source: "system",
+        messageID: "msg-1",
+      },
+    ])
+  })
+
+  test("emits tool error row once on failure", async () => {
+    const out = await turn(
+      client([
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "tool-err",
+              messageID: "msg-1",
+              sessionID: "session-1",
+              type: "tool",
+              tool: "bash",
+              state: {
+                status: "error",
+                input: {
+                  command: "ls",
+                },
+                error: "boom",
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "tool-err",
+              messageID: "msg-1",
+              sessionID: "session-1",
+              type: "tool",
+              tool: "bash",
+              state: {
+                status: "error",
+                input: {
+                  command: "ls",
+                },
+                error: "boom",
+                time: { start: 1, end: 2 },
+              },
+            },
+          },
+        },
+        idle(),
+      ]),
+      { prompt: "hi" },
+    )
+
+    expect(out.appended).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        text: "[tool:bash:error] boom",
+        phase: "final",
+        source: "tool",
+        messageID: "msg-1",
+        partID: "tool-err",
+        tool: "bash",
+      }),
+    ])
+  })
+
+  test("keeps bash echo de-dupe scoped to the first assistant flush", async () => {
+    const out = await turn(
+      client([
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "session-1",
+            info: {
+              id: "msg-1",
+              role: "assistant",
+              agent: "main-agent",
+              modelID: "main-model",
+              providerID: "openai",
+              tokens: {
+                input: 1,
+                output: 1,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "tool-1",
+              messageID: "msg-1",
+              sessionID: "session-1",
+              type: "tool",
+              tool: "bash",
+              state: {
+                status: "completed",
+                input: {
+                  command: "printf hi",
+                },
+                output: "echoed\n",
+              },
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "txt-1",
+              messageID: "msg-1",
+              sessionID: "session-1",
+              type: "text",
+              text: "echoed\nanswer",
+            },
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "session-1",
+            messageID: "msg-1",
+            partID: "txt-1",
+            field: "text",
+            delta: "\nechoed\nagain",
+          },
+        },
+        idle(),
+      ]),
+      { prompt: "hi" },
+    )
+
+    expect(
+      out.appended.filter(
+        (item): item is { kind: string; text: string; partID?: string } =>
+          typeof item === "object" && item !== null && "kind" in item && "text" in item,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "assistant", partID: "txt-1", text: "answer" }),
+        expect.objectContaining({ kind: "assistant", partID: "txt-1", text: "\nechoed\nagain" }),
+      ]),
+    )
+  })
+
   test("shows waiting status when assistant never announces", async () => {
     const out = await turn(client([idle()]))
 
