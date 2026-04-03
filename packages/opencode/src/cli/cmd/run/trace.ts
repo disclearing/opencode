@@ -20,6 +20,10 @@ function file() {
   return path.join(Global.Path.log, "direct", `${stamp()}-${process.pid}.jsonl`)
 }
 
+function latest() {
+  return path.join(Global.Path.log, "direct", "latest.json")
+}
+
 function text(data: unknown) {
   return JSON.stringify(
     data,
@@ -46,6 +50,16 @@ export function trace() {
 
   const target = file()
   fs.mkdirSync(path.dirname(target), { recursive: true })
+  fs.writeFileSync(
+    latest(),
+    text({
+      time: new Date().toISOString(),
+      pid: process.pid,
+      cwd: process.cwd(),
+      argv: process.argv.slice(2),
+      path: target,
+    }) + "\n",
+  )
   state = {
     path: target,
     write(type: string, data?: unknown) {
