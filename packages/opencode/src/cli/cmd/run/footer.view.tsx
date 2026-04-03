@@ -13,7 +13,30 @@ import {
   type PermissionBodyState,
   type PermissionOption,
 } from "./footer.permission"
-import type { FooterKeybinds, FooterState, FooterView, PermissionReply, RunDiffStyle } from "./types"
+import {
+  RunQuestionBody,
+  createQuestionBodyState,
+  questionAnswers,
+  questionConfirm,
+  questionCustom,
+  questionInfo,
+  questionInput,
+  questionOther,
+  questionPicked,
+  questionSingle,
+  questionTabs,
+  questionTotal,
+  type QuestionBodyState,
+} from "./footer.question"
+import type {
+  FooterKeybinds,
+  FooterState,
+  FooterView,
+  PermissionReply,
+  QuestionReject,
+  QuestionReply,
+  RunDiffStyle,
+} from "./types"
 import { RUN_THEME_FALLBACK, type RunFooterTheme } from "./theme"
 
 const LEADER_TIMEOUT_MS = 2000
@@ -82,6 +105,8 @@ type RunFooterViewProps = {
   agent: string
   onSubmit: (text: string) => boolean
   onPermissionReply?: (input: PermissionReply) => void | Promise<void>
+  onQuestionReply?: (input: QuestionReply) => void | Promise<void>
+  onQuestionReject?: (input: QuestionReject) => void | Promise<void>
   onCycle: () => void
   onInterrupt: () => boolean
   onExitRequest?: () => boolean
@@ -244,10 +269,6 @@ function RunBodyShell(props: {
   )
 }
 
-function questionLines(view: Extract<FooterView, { type: "question" }>): string[] {
-  return view.request.questions.map((item, index) => `${index + 1}. ${item.header || item.question}`)
-}
-
 export function RunFooterView(props: RunFooterViewProps) {
   const term = useTerminalDimensions()
   const active = createMemo<FooterView>(() => props.view?.() ?? { type: "prompt" })
@@ -293,9 +314,14 @@ export function RunFooterView(props: RunFooterViewProps) {
   })
   const [draft, setDraft] = createSignal("")
   const [permission, setPermission] = createSignal<PermissionBodyState>(createPermissionBodyState(""))
+  const [question, setQuestion] = createSignal<QuestionBodyState>(createQuestionBodyState(""))
   const permissionView = createMemo<Extract<FooterView, { type: "permission" }> | undefined>(() => {
     const view = active()
     return view.type === "permission" ? view : undefined
+  })
+  const questionView = createMemo<Extract<FooterView, { type: "question" }> | undefined>(() => {
+    const view = active()
+    return view.type === "question" ? view : undefined
   })
 
   const history: History = {
@@ -654,6 +680,407 @@ export function RunFooterView(props: RunFooterViewProps) {
     }))
   }
 
+  const setQuestionTab = (tab: number) => {
+    setQuestion((prev) => ({
+      ...prev,
+      tab,
+      selected: 0,
+      editing: false,
+    }))
+  }
+
+  const moveQuestion = (dir: -1 | 1) => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    const total = questionTotal(view.request, question())
+    if (total === 0) {
+      return
+    }
+
+    setQuestion((prev) => ({
+      ...prev,
+      selected: (prev.selected + dir + total) % total,
+    }))
+  }
+
+  const beginQuestionReply = async (input: QuestionReply) => {
+    if (!props.onQuestionReply) {
+      props.onStatus("question queue unavailable")
+      return
+    }
+
+    setQuestion((prev) => ({
+      ...prev,
+      submitting: true,
+    }))
+
+    try {
+      await props.onQuestionReply(input)
+    } catch {
+      setQuestion((prev) => ({
+        ...prev,
+        submitting: false,
+      }))
+    }
+  }
+
+  const beginQuestionReject = async (input: QuestionReject) => {
+    if (!props.onQuestionReject) {
+      props.onStatus("question queue unavailable")
+      return
+    }
+
+    setQuestion((prev) => ({
+      ...prev,
+      submitting: true,
+    }))
+
+    try {
+      await props.onQuestionReject(input)
+    } catch {
+      setQuestion((prev) => ({
+        ...prev,
+        submitting: false,
+      }))
+    }
+  }
+
+  const storeQuestion = (tab: number, list: string[]) => {
+    setQuestion((prev) => {
+      const answers = [...prev.answers]
+      answers[tab] = list
+      return {
+        ...prev,
+        answers,
+      }
+    })
+  }
+
+  const storeCustom = (tab: number, text: string) => {
+    setQuestion((prev) => {
+      const custom = [...prev.custom]
+      custom[tab] = text
+      return {
+        ...prev,
+        custom,
+      }
+    })
+  }
+
+  const pickQuestion = (answer: string, custom = false) => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    const state = question()
+    const answers = [...state.answers]
+    answers[state.tab] = [answer]
+    const next = {
+      ...state,
+      answers,
+      editing: false,
+    }
+    if (custom) {
+      const list = [...state.custom]
+      list[state.tab] = answer
+      next.custom = list
+    }
+    setQuestion(next)
+
+    if (questionSingle(view.request)) {
+      void beginQuestionReply({
+        requestID: view.request.id,
+        answers: [[answer]],
+      })
+      return
+    }
+
+    setQuestionTab(state.tab + 1)
+  }
+
+  const toggleQuestion = (answer: string) => {
+    const state = question()
+    const list = [...(state.answers[state.tab] ?? [])]
+    const index = list.indexOf(answer)
+    if (index === -1) {
+      list.push(answer)
+    } else {
+      list.splice(index, 1)
+    }
+    storeQuestion(state.tab, list)
+  }
+
+  const saveQuestionCustom = () => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    const state = question()
+    const info = questionInfo(view.request, state)
+    if (!info) {
+      return
+    }
+
+    const text = questionInput(state).trim()
+    const prev = state.custom[state.tab]
+    if (!text) {
+      if (prev) {
+        storeCustom(state.tab, "")
+        storeQuestion(
+          state.tab,
+          (state.answers[state.tab] ?? []).filter((item) => item !== prev),
+        )
+      }
+      setQuestion((prev) => ({
+        ...prev,
+        editing: false,
+      }))
+      return
+    }
+
+    if (info.multiple) {
+      const answers = [...(state.answers[state.tab] ?? [])]
+      if (prev) {
+        const index = answers.indexOf(prev)
+        if (index !== -1) {
+          answers.splice(index, 1)
+        }
+      }
+      if (!answers.includes(text)) {
+        answers.push(text)
+      }
+      storeCustom(state.tab, text)
+      storeQuestion(state.tab, answers)
+      setQuestion((prev) => ({
+        ...prev,
+        editing: false,
+      }))
+      return
+    }
+
+    pickQuestion(text, true)
+  }
+
+  const selectQuestion = () => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    const state = question()
+    const info = questionInfo(view.request, state)
+    if (!info) {
+      return
+    }
+
+    if (questionOther(view.request, state)) {
+      if (!info.multiple) {
+        setQuestion((prev) => ({
+          ...prev,
+          editing: true,
+        }))
+        return
+      }
+
+      const value = questionInput(state)
+      if (value && questionPicked(state)) {
+        toggleQuestion(value)
+        return
+      }
+
+      setQuestion((prev) => ({
+        ...prev,
+        editing: true,
+      }))
+      return
+    }
+
+    const option = info.options[state.selected]
+    if (!option) {
+      return
+    }
+
+    if (info.multiple) {
+      toggleQuestion(option.label)
+      return
+    }
+
+    pickQuestion(option.label)
+  }
+
+  const submitQuestion = () => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    void beginQuestionReply({
+      requestID: view.request.id,
+      answers: questionAnswers(question(), view.request.questions.length),
+    })
+  }
+
+  const rejectQuestion = () => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    void beginQuestionReject({
+      requestID: view.request.id,
+    })
+  }
+
+  const handleQuestionKey = (event: Key): boolean => {
+    const view = questionView()
+    if (!view) {
+      return false
+    }
+
+    const state = question()
+    if (state.submitting) {
+      event.preventDefault()
+      return true
+    }
+
+    if (state.editing) {
+      if (event.name === "escape") {
+        setQuestion((prev) => ({
+          ...prev,
+          editing: false,
+        }))
+        event.preventDefault()
+        return true
+      }
+
+      if (event.name === "return" && !event.shift && !event.ctrl && !event.meta) {
+        saveQuestionCustom()
+        event.preventDefault()
+        return true
+      }
+
+      return false
+    }
+
+    if (!questionSingle(view.request) && (event.name === "left" || event.name === "h")) {
+      setQuestionTab((state.tab - 1 + questionTabs(view.request)) % questionTabs(view.request))
+      event.preventDefault()
+      return true
+    }
+
+    if (!questionSingle(view.request) && (event.name === "right" || event.name === "l")) {
+      setQuestionTab((state.tab + 1) % questionTabs(view.request))
+      event.preventDefault()
+      return true
+    }
+
+    if (!questionSingle(view.request) && event.name === "tab") {
+      const dir = event.shift ? -1 : 1
+      setQuestionTab((state.tab + dir + questionTabs(view.request)) % questionTabs(view.request))
+      event.preventDefault()
+      return true
+    }
+
+    if (questionConfirm(view.request, state)) {
+      if (event.name === "return") {
+        submitQuestion()
+        event.preventDefault()
+        return true
+      }
+
+      if (event.name === "escape") {
+        rejectQuestion()
+        event.preventDefault()
+        return true
+      }
+
+      return false
+    }
+
+    const total = questionTotal(view.request, state)
+    const max = Math.min(total, 9)
+    const digit = Number(event.name)
+    if (!Number.isNaN(digit) && digit >= 1 && digit <= max) {
+      setQuestion((prev) => ({
+        ...prev,
+        selected: digit - 1,
+      }))
+      selectQuestion()
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name === "up" || event.name === "k") {
+      moveQuestion(-1)
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name === "down" || event.name === "j") {
+      moveQuestion(1)
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name === "return") {
+      selectQuestion()
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name === "escape") {
+      rejectQuestion()
+      event.preventDefault()
+      return true
+    }
+
+    return false
+  }
+
+  const onQuestionTab = (tab: number) => {
+    if (question().submitting) {
+      return
+    }
+
+    setQuestionTab(tab)
+  }
+
+  const onQuestionMove = (index: number) => {
+    if (question().submitting) {
+      return
+    }
+
+    setQuestion((prev) => ({
+      ...prev,
+      selected: index,
+    }))
+  }
+
+  const onQuestionOption = (index: number) => {
+    if (question().submitting) {
+      return
+    }
+
+    setQuestion((prev) => ({
+      ...prev,
+      selected: index,
+    }))
+    selectQuestion()
+  }
+
+  const onQuestionCustom = (text: string) => {
+    if (question().submitting) {
+      return
+    }
+
+    storeCustom(question().tab, text)
+  }
+
   const onKeyDown = (event: Key) => {
     if (event.ctrl && event.name === "c") {
       const handled = props.onExitRequest ? props.onExitRequest() : (props.onExit(), true)
@@ -727,6 +1154,11 @@ export function RunFooterView(props: RunFooterViewProps) {
         return
       }
 
+      return
+    }
+
+    if (questionView()) {
+      handleQuestionKey(event)
       return
     }
 
@@ -858,6 +1290,19 @@ export function RunFooterView(props: RunFooterViewProps) {
     setPermission(createPermissionBodyState(view.request.id))
   })
 
+  createEffect(() => {
+    const view = questionView()
+    if (!view) {
+      return
+    }
+
+    if (question().requestID === view.request.id) {
+      return
+    }
+
+    setQuestion(createQuestionBodyState(view.request.id))
+  })
+
   return (
     <box
       id="run-direct-footer-shell"
@@ -924,12 +1369,14 @@ export function RunFooterView(props: RunFooterViewProps) {
                 />
               </Match>
               <Match when={active().type === "question"}>
-                <RunBodyShell
-                  id="run-direct-footer-question-body"
-                  theme={theme}
-                  title="Questions pending"
-                  lines={questionLines(active() as Extract<FooterView, { type: "question" }>)}
-                  hint="Question prompt active"
+                <RunQuestionBody
+                  request={questionView()!.request}
+                  state={question()}
+                  theme={theme()}
+                  onTab={onQuestionTab}
+                  onMove={onQuestionMove}
+                  onOption={onQuestionOption}
+                  onCustom={onQuestionCustom}
                 />
               </Match>
             </Switch>

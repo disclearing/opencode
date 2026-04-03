@@ -152,7 +152,7 @@ describe("run footer", () => {
         } as any,
       })
       const permission = ctx.setup.renderer.footerHeight
-      expect(permission).toBeGreaterThan(7)
+      expect(permission).toBe(16)
 
       ctx.footer.present({
         type: "question",
@@ -168,7 +168,7 @@ describe("run footer", () => {
           ],
         } as any,
       })
-      expect(ctx.setup.renderer.footerHeight).toBeGreaterThan(permission)
+      expect(ctx.setup.renderer.footerHeight).toBe(18)
 
       ctx.footer.present({ type: "prompt" })
       expect(ctx.setup.renderer.footerHeight).toBe(7)

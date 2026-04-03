@@ -4,7 +4,13 @@ import type { PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { testRender } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { RunFooterView, hintFlags } from "../../../src/cli/cmd/run/footer.view"
-import type { FooterState, FooterView, PermissionReply } from "../../../src/cli/cmd/run/types"
+import type {
+  FooterState,
+  FooterView,
+  PermissionReply,
+  QuestionReject,
+  QuestionReply,
+} from "../../../src/cli/cmd/run/types"
 
 function get(node: any, id: string): any {
   if (node.id === id) {
@@ -759,8 +765,8 @@ describe("run footer view", () => {
     })
     await setup.renderOnce()
     expect(get(setup.renderer.root, "run-direct-footer-composer")).toBeUndefined()
-    expect(setup.captureCharFrame()).toContain("Questions pending")
-    expect(setup.captureCharFrame()).toContain("1. Mode")
+    expect(setup.captureCharFrame()).toContain("Streaming mode")
+    expect(setup.captureCharFrame()).toContain("1. chunked")
 
     setView({
       type: "permission",
@@ -1140,5 +1146,453 @@ describe("run footer view", () => {
         message: "Please use ripgrep instead",
       },
     ])
+  })
+
+  test("question body submits single-select answers immediately", async () => {
+    const replies: QuestionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting answer",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "question",
+      request: question(),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onQuestionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([
+      {
+        requestID: "question-1",
+        answers: [["chunked"]],
+      },
+    ])
+  })
+
+  test("question body collects multi-question answers and submits from confirm tab", async () => {
+    const replies: QuestionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting answer",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "question",
+      request: question({
+        questions: [
+          {
+            question: "Streaming mode",
+            header: "Mode",
+            options: [
+              { label: "chunked", description: "Incremental output" },
+              { label: "final", description: "One final answer" },
+            ],
+            multiple: false,
+          },
+          {
+            question: "Show tool output",
+            header: "Output",
+            options: [
+              { label: "yes", description: "Show tool output" },
+              { label: "no", description: "Hide tool output" },
+            ],
+            multiple: false,
+          },
+        ],
+      }),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onQuestionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Review")
+
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([
+      {
+        requestID: "question-1",
+        answers: [["chunked"], ["yes"]],
+      },
+    ])
+  })
+
+  test("question body supports custom single-select answers", async () => {
+    const replies: QuestionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting answer",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "question",
+      request: question({
+        questions: [
+          {
+            question: "Streaming mode",
+            header: "Mode",
+            options: [{ label: "chunked", description: "Incremental output" }],
+            multiple: false,
+          },
+        ],
+      }),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onQuestionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    setup.mockInput.pressArrow("down")
+    setup.mockInput.pressEnter()
+    await setup.renderOnce()
+    expect(get(setup.renderer.root, "run-direct-footer-question-custom")).toBeDefined()
+
+    await setup.mockInput.typeText("custom mode")
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([
+      {
+        requestID: "question-1",
+        answers: [["custom mode"]],
+      },
+    ])
+  })
+
+  test("question mouse actions freeze while a reply is in flight", async () => {
+    const replies: QuestionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting answer",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "question",
+      request: question(),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onQuestionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 20,
+      },
+    )
+
+    await setup.renderOnce()
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    const item = get(setup.renderer.root, "run-direct-footer-question-option-0") as {
+      onMouseUp?: (event: unknown) => void
+    }
+    item.onMouseUp?.({})
+    await setup.renderOnce()
+
+    expect(replies).toEqual([
+      {
+        requestID: "question-1",
+        answers: [["chunked"]],
+      },
+    ])
+  })
+
+  test("question escape rejects the request", async () => {
+    const rejects: QuestionReject[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting answer",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "question",
+      request: question(),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onQuestionReject={async (input) => {
+            rejects.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    setup.mockInput.pressEscape()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await setup.renderOnce()
+
+    expect(rejects).toEqual([{ requestID: "question-1" }])
+  })
+
+  test("question state resets when request id changes", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting answer",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view, setView] = createSignal<FooterView>({
+      type: "question",
+      request: question({
+        id: "question-1",
+        questions: [
+          {
+            question: "Streaming mode",
+            header: "Mode",
+            options: [
+              { label: "chunked", description: "Incremental output" },
+              { label: "final", description: "One final answer" },
+            ],
+            multiple: false,
+          },
+        ],
+      }),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    setup.mockInput.pressArrow("down")
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("2. final")
+
+    setView({
+      type: "question",
+      request: question({
+        id: "question-2",
+        questions: [
+          {
+            question: "Show tool output",
+            header: "Output",
+            options: [
+              { label: "yes", description: "Show tool output" },
+              { label: "no", description: "Hide tool output" },
+            ],
+            multiple: false,
+          },
+        ],
+      }),
+    })
+    await setup.renderOnce()
+
+    expect(setup.captureCharFrame()).toContain("1. yes")
+    expect(setup.captureCharFrame()).not.toContain("2. final")
   })
 })

@@ -36,8 +36,8 @@ type RunFooterOptions = {
   onExit?: () => void
 }
 
-const PERMISSION_ROWS = 4
-const QUESTION_ROWS = 5
+const PERMISSION_ROWS = 10
+const QUESTION_ROWS = 12
 
 export class RunFooter implements FooterApi {
   private closed = false
@@ -97,6 +97,8 @@ export class RunFooter implements FooterApi {
           agent: options.agentLabel,
           onSubmit: this.handlePrompt,
           onPermissionReply: this.handlePermissionReply,
+          onQuestionReply: this.handleQuestionReply,
+          onQuestionReject: this.handleQuestionReject,
           onCycle: this.handleCycle,
           onInterrupt: this.handleInterrupt,
           onExitRequest: this.handleExit,
@@ -289,11 +291,13 @@ export class RunFooter implements FooterApi {
   }
 
   private applyHeight(): void {
-    const body =
-      this.view().type === "permission" ? PERMISSION_ROWS : this.view().type === "question" ? QUESTION_ROWS : this.rows
-    const min = this.base + TEXTAREA_MIN_ROWS
-    const max = this.base + TEXTAREA_MAX_ROWS
-    const height = Math.max(min, Math.min(max, this.base + body))
+    const type = this.view().type
+    const height =
+      type === "permission"
+        ? this.base + PERMISSION_ROWS
+        : type === "question"
+          ? this.base + QUESTION_ROWS
+          : Math.max(this.base + TEXTAREA_MIN_ROWS, Math.min(this.base + TEXTAREA_MAX_ROWS, this.base + this.rows))
 
     if (height !== this.renderer.footerHeight) {
       this.renderer.footerHeight = height
@@ -344,6 +348,28 @@ export class RunFooter implements FooterApi {
     }
 
     for (const fn of [...this.permissions]) {
+      await fn(input)
+    }
+  }
+
+  private handleQuestionReply = async (input: QuestionReply): Promise<void> => {
+    if (this.questions.size === 0) {
+      this.patch({ status: "question queue unavailable" })
+      throw new Error("question queue unavailable")
+    }
+
+    for (const fn of [...this.questions]) {
+      await fn(input)
+    }
+  }
+
+  private handleQuestionReject = async (input: QuestionReject): Promise<void> => {
+    if (this.rejects.size === 0) {
+      this.patch({ status: "question queue unavailable" })
+      throw new Error("question queue unavailable")
+    }
+
+    for (const fn of [...this.rejects]) {
       await fn(input)
     }
   }
