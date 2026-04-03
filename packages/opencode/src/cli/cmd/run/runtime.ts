@@ -9,7 +9,8 @@ import { RunFooter } from "./footer"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { formatUnknownError, runPromptTurn } from "./stream"
 import { resolveRunTheme } from "./theme"
-import type { FooterApi, FooterKeybinds, RunInput } from "./types"
+import { trace } from "./trace"
+import type { FooterApi, FooterKeybinds, FooterPatch, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 7
 const HISTORY_LIMIT = 200
@@ -382,6 +383,7 @@ function splashTitle(title: string | undefined, history: string[]): string | und
 
 /** @internal Exported for testing */
 export async function runPromptQueue(input: QueueInput): Promise<void> {
+  const log = trace()
   const q: string[] = []
   let turn = 0
   let run = false
@@ -414,6 +416,11 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     done = undefined
   }
 
+  const patch = (next: FooterPatch) => {
+    log?.write("ui.patch", next)
+    input.footer.patch(next)
+  }
+
   const pump = async () => {
     if (run || closed) {
       return
@@ -428,7 +435,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           continue
         }
 
-        input.footer.patch({
+        patch({
           phase: "running",
           status: "sending prompt",
           queue: q.length,
@@ -444,7 +451,9 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           await input.footer.idle()
           const text = turn === 0 ? prompt : `\n${prompt}`
           turn += 1
-          input.footer.append({ kind: "user", text, phase: "start", source: "system" })
+          const commit = { kind: "user", text, phase: "start", source: "system" } as const
+          log?.write("ui.commit", commit)
+          input.footer.append(commit)
           const out = await Promise.race([task, until.then(() => ({ type: "closed" as const }))])
           if (out.type === "closed") {
             next.abort()
@@ -458,14 +467,14 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           if (ctrl === next) {
             ctrl = undefined
           }
-          input.footer.patch({
+          patch({
             duration: Locale.duration(Math.max(0, Date.now() - start)),
           })
         }
       }
     } finally {
       run = false
-      input.footer.patch({
+      patch({
         phase: "idle",
         status: "",
         queue: q.length,
@@ -486,8 +495,8 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     }
 
     q.push(prompt)
-    input.footer.patch({ queue: q.length })
-    input.footer.patch({ first: false })
+    patch({ queue: q.length })
+    patch({ first: false })
     void pump().catch(fail)
   }
 

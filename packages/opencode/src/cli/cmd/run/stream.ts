@@ -1,5 +1,6 @@
 import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
 import { createSessionData, reduceSessionData, flushInterrupted, type SessionCommit } from "./session-data"
+import { trace } from "./trace"
 import type { FooterApi, RunFilePart, RunInput } from "./types"
 
 type TurnInput = {
@@ -44,6 +45,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     return
   }
 
+  const log = trace()
   const abort = new AbortController()
   const stop = () => {
     abort.abort()
@@ -56,13 +58,16 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     events = await input.sdk.event.subscribe(undefined, {
       signal: abort.signal,
     })
+    log?.write("recv.subscribe", {
+      sessionID: input.sessionID,
+    })
   } catch (error) {
     input.signal?.removeEventListener("abort", stop)
     throw error
   }
   const close = () => {
     // Pass undefined explicitly so TS accepts AsyncGenerator.return().
-    void events.stream.return(undefined).catch(() => { })
+    void events.stream.return(undefined).catch(() => {})
   }
   let data = createSessionData()
 
@@ -74,6 +79,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         }
 
         const event = item as Event
+        log?.write("recv.event", event)
         const next = reduceSessionData({
           data,
           event,
@@ -83,11 +89,24 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         })
         data = next.data
 
+        if (next.commits.length > 0 || next.status || next.usage) {
+          log?.write("reduce.output", {
+            commits: next.commits,
+            status: next.status,
+            usage: next.usage,
+          })
+        }
+
         for (const commit of next.commits) {
+          log?.write("ui.commit", commit)
           input.footer.append(commit)
         }
 
         if (next.status) {
+          log?.write("ui.patch", {
+            phase: "running",
+            status: next.status,
+          })
           input.footer.patch({
             phase: "running",
             status: next.status,
@@ -95,6 +114,9 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         }
 
         if (next.usage) {
+          log?.write("ui.patch", {
+            usage: next.usage,
+          })
           input.footer.patch({
             usage: next.usage,
           })
@@ -111,6 +133,10 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
         if (event.type === "permission.asked") {
           const permission = event.properties
           if (permission.sessionID !== input.sessionID) continue
+          log?.write("send.permission.reply", {
+            requestID: permission.id,
+            reply: "reject",
+          })
           await input.sdk.permission.reply({
             requestID: permission.id,
             reply: "reject",
@@ -125,29 +151,39 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
   })()
 
   try {
-    await input.sdk.session.prompt(
-      {
-        sessionID: input.sessionID,
-        agent: input.agent,
-        model: input.model,
-        variant: input.variant,
-        parts: [...(input.includeFiles ? input.files : []), { type: "text", text: input.prompt }],
-      },
-      {
-        signal: abort.signal,
-      },
-    )
+    const req = {
+      sessionID: input.sessionID,
+      agent: input.agent,
+      model: input.model,
+      variant: input.variant,
+      parts: [...(input.includeFiles ? input.files : []), { type: "text" as const, text: input.prompt }],
+    }
+    log?.write("send.prompt", req)
+    await input.sdk.session.prompt(req, {
+      signal: abort.signal,
+    })
+    log?.write("send.prompt.ok", {
+      sessionID: input.sessionID,
+    })
 
     if (abort.signal.aborted) {
       const commits: SessionCommit[] = []
       flushInterrupted(data, commits)
       for (const commit of commits) {
+        log?.write("ui.commit", commit)
         input.footer.append(commit)
       }
+      log?.write("turn.abort", {
+        sessionID: input.sessionID,
+      })
       return
     }
 
     if (!input.footer.isClosed && !data.announced) {
+      log?.write("ui.patch", {
+        phase: "running",
+        status: "waiting for assistant",
+      })
       input.footer.patch({
         phase: "running",
         status: "waiting for assistant",
@@ -163,15 +199,26 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       const commits: SessionCommit[] = []
       flushInterrupted(data, commits)
       for (const commit of commits) {
+        log?.write("ui.commit", commit)
         input.footer.append(commit)
       }
-      void watch.catch(() => { })
+      log?.write("turn.cancel", {
+        sessionID: input.sessionID,
+      })
+      void watch.catch(() => {})
       return
     }
 
-    await watch.catch(() => { })
+    log?.write("send.prompt.error", {
+      sessionID: input.sessionID,
+      error: formatUnknownError(error),
+    })
+    await watch.catch(() => {})
     throw error
   } finally {
+    log?.write("turn.end", {
+      sessionID: input.sessionID,
+    })
     close()
     input.signal?.removeEventListener("abort", stop)
     abort.abort()
