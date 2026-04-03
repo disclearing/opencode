@@ -69,6 +69,16 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     // Pass undefined explicitly so TS accepts AsyncGenerator.return().
     void events.stream.return(undefined).catch(() => {})
   }
+  const offPermission = input.footer.onPermissionReply(async (payload) => {
+    log?.write("send.permission.reply", payload)
+    await input.sdk.permission.reply(payload)
+  })
+  const offQuestion = input.footer.onQuestionReply(async (payload) => {
+    await input.sdk.question.reply(payload)
+  })
+  const offReject = input.footer.onQuestionReject(async (payload) => {
+    await input.sdk.question.reject(payload)
+  })
   let data = createSessionData()
 
   const watch = (async () => {
@@ -123,19 +133,6 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
           event.properties.status.type === "idle"
         ) {
           break
-        }
-
-        if (event.type === "permission.asked") {
-          const permission = event.properties
-          if (permission.sessionID !== input.sessionID) continue
-          log?.write("send.permission.reply", {
-            requestID: permission.id,
-            reply: "reject",
-          })
-          await input.sdk.permission.reply({
-            requestID: permission.id,
-            reply: "reject",
-          })
         }
       }
     } catch (error) {
@@ -214,6 +211,9 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     log?.write("turn.end", {
       sessionID: input.sessionID,
     })
+    offPermission()
+    offQuestion()
+    offReject()
     close()
     input.signal?.removeEventListener("abort", stop)
     abort.abort()

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { OpencodeClient } from "@opencode-ai/sdk/v2"
 import { runPromptTurn } from "../../../src/cli/cmd/run/stream"
+import type { PermissionReply, QuestionReject, QuestionReply } from "../../../src/cli/cmd/run/types"
 
 function eventStream(events: unknown[]) {
   return {
@@ -28,7 +29,9 @@ function client(
   events: unknown[],
   opt: {
     prompt?: (payload: unknown, options: unknown) => Promise<void>
-    reply?: (payload: unknown) => Promise<void>
+    permissionReply?: (payload: unknown) => Promise<void>
+    questionReply?: (payload: unknown) => Promise<void>
+    questionReject?: (payload: unknown) => Promise<void>
   } = {},
 ) {
   return {
@@ -39,17 +42,34 @@ function client(
       prompt: opt.prompt ?? (async () => {}),
     },
     permission: {
-      reply: opt.reply ?? (async () => {}),
+      reply: opt.permissionReply ?? (async () => {}),
+    },
+    question: {
+      reply: opt.questionReply ?? (async () => {}),
+      reject: opt.questionReject ?? (async () => {}),
     },
   } as unknown as OpencodeClient
 }
 
-type TurnOpt = Partial<Omit<Parameters<typeof runPromptTurn>[0], "sdk" | "sessionID" | "footer">>
+type TurnOpt = Partial<Omit<Parameters<typeof runPromptTurn>[0], "sdk" | "sessionID" | "footer">> & {
+  onView?: (
+    view: unknown,
+    actions: {
+      permission: (payload: PermissionReply) => Promise<void>
+      question: (payload: QuestionReply) => Promise<void>
+      reject: (payload: QuestionReject) => Promise<void>
+    },
+  ) => void | Promise<void>
+}
 
 async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
   const patched: unknown[] = []
   const appended: unknown[] = []
   const presented: unknown[] = []
+  const tasks: Promise<void>[] = []
+  let permission: ((payload: PermissionReply) => void | Promise<void>) | undefined
+  let question: ((payload: QuestionReply) => void | Promise<void>) | undefined
+  let reject: ((payload: QuestionReject) => void | Promise<void>) | undefined
 
   await runPromptTurn({
     sdk,
@@ -66,15 +86,50 @@ async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
     footer: {
       isClosed: false,
       onPrompt: () => () => {},
-      onPermissionReply: () => () => {},
-      onQuestionReply: () => () => {},
-      onQuestionReject: () => () => {},
+      onPermissionReply(fn) {
+        permission = fn
+        return () => {
+          if (permission === fn) {
+            permission = undefined
+          }
+        }
+      },
+      onQuestionReply(fn) {
+        question = fn
+        return () => {
+          if (question === fn) {
+            question = undefined
+          }
+        }
+      },
+      onQuestionReject(fn) {
+        reject = fn
+        return () => {
+          if (reject === fn) {
+            reject = undefined
+          }
+        }
+      },
       onClose: () => () => {},
       patch(next) {
         patched.push(next)
       },
       present(view) {
         presented.push(view)
+        const next = opt.onView?.(view, {
+          permission: async (payload: PermissionReply) => {
+            await permission?.(payload)
+          },
+          question: async (payload: QuestionReply) => {
+            await question?.(payload)
+          },
+          reject: async (payload: QuestionReject) => {
+            await reject?.(payload)
+          },
+        })
+        if (next) {
+          tasks.push(Promise.resolve(next))
+        }
       },
       append(commit) {
         appended.push(commit)
@@ -86,6 +141,8 @@ async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
       destroy() {},
     },
   })
+
+  await Promise.all(tasks)
 
   return {
     patched,
@@ -273,7 +330,7 @@ describe("run stream", () => {
     ])
   })
 
-  test("auto rejects permissions and emits session errors", async () => {
+  test("shows permission view without auto reply and emits session errors", async () => {
     const permissionReplies: unknown[] = []
 
     const out = await turn(
@@ -303,19 +360,14 @@ describe("run stream", () => {
           idle(),
         ],
         {
-          reply: async (payload: unknown) => {
+          permissionReply: async (payload: unknown) => {
             permissionReplies.push(payload)
           },
         },
       ),
     )
 
-    expect(permissionReplies).toEqual([
-      {
-        requestID: "perm-1",
-        reply: "reject",
-      },
-    ])
+    expect(permissionReplies).toEqual([])
 
     expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "awaiting permission" }))
     expect(out.presented).toContainEqual(
@@ -407,19 +459,14 @@ describe("run stream", () => {
           idle(),
         ],
         {
-          reply: async (payload: unknown) => {
+          permissionReply: async (payload: unknown) => {
             replies.push(payload)
           },
         },
       ),
     )
 
-    expect(replies).toEqual([
-      {
-        requestID: "perm-1",
-        reply: "reject",
-      },
-    ])
+    expect(replies).toEqual([])
 
     expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "assistant responding" }))
     expect(out.patched).toContainEqual(expect.objectContaining({ phase: "running", status: "awaiting permission" }))
@@ -533,19 +580,14 @@ describe("run stream", () => {
           idle(),
         ],
         {
-          reply: async (payload: unknown) => {
+          permissionReply: async (payload: unknown) => {
             replies.push(payload)
           },
         },
       ),
     )
 
-    expect(replies).toEqual([
-      {
-        requestID: "perm-1",
-        reply: "reject",
-      },
-    ])
+    expect(replies).toEqual([])
     expect(out.appended).toEqual([])
     expect(out.presented[0]).toEqual(
       expect.objectContaining({
@@ -559,6 +601,114 @@ describe("run stream", () => {
         request: expect.objectContaining({ id: "question-1" }),
       }),
     )
+  })
+
+  test("forwards footer permission replies to sdk.permission.reply", async () => {
+    const permissionReplies: unknown[] = []
+
+    await turn(
+      client(
+        [
+          {
+            type: "permission.asked",
+            properties: {
+              id: "perm-1",
+              sessionID: "session-1",
+              permission: "read",
+              patterns: ["/tmp/file.txt"],
+            },
+          },
+          idle(),
+        ],
+        {
+          permissionReply: async (payload: unknown) => {
+            permissionReplies.push(payload)
+          },
+        },
+      ),
+      {
+        onView: async (view, actions) => {
+          if ((view as { type?: string }).type !== "permission") {
+            return
+          }
+
+          await actions.permission({
+            requestID: "perm-1",
+            reply: "once",
+          })
+        },
+      },
+    )
+
+    expect(permissionReplies).toEqual([
+      {
+        requestID: "perm-1",
+        reply: "once",
+      },
+    ])
+  })
+
+  test("forwards footer question reply and reject actions to sdk.question", async () => {
+    const questionReplies: unknown[] = []
+    const questionRejects: unknown[] = []
+
+    await turn(
+      client(
+        [
+          {
+            type: "question.asked",
+            properties: {
+              id: "question-1",
+              sessionID: "session-1",
+              questions: [
+                {
+                  question: "Streaming mode",
+                  header: "Mode",
+                  options: [{ label: "chunked", description: "Incremental output" }],
+                  multiple: false,
+                },
+              ],
+            },
+          },
+          idle(),
+        ],
+        {
+          questionReply: async (payload: unknown) => {
+            questionReplies.push(payload)
+          },
+          questionReject: async (payload: unknown) => {
+            questionRejects.push(payload)
+          },
+        },
+      ),
+      {
+        onView: async (view, actions) => {
+          if ((view as { type?: string }).type !== "question") {
+            return
+          }
+
+          await actions.question({
+            requestID: "question-1",
+            answers: [["chunked"]],
+          })
+          await actions.reject({
+            requestID: "question-1",
+          })
+        },
+      },
+    )
+
+    expect(questionReplies).toEqual([
+      {
+        requestID: "question-1",
+        answers: [["chunked"]],
+      },
+    ])
+    expect(questionRejects).toEqual([
+      {
+        requestID: "question-1",
+      },
+    ])
   })
 
   test("emits assistant message error row for non-abort failures", async () => {
