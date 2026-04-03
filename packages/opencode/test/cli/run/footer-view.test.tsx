@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { testRender } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { RunFooterView, hintFlags } from "../../../src/cli/cmd/run/footer.view"
-import type { FooterState } from "../../../src/cli/cmd/run/types"
+import type { FooterState, FooterView } from "../../../src/cli/cmd/run/types"
 
 function get(node: any, id: string): any {
   if (node.id === id) {
@@ -666,5 +666,252 @@ describe("run footer view", () => {
 
     await setup.renderOnce()
     expect(setup.captureCharFrame()).toContain("2 queued")
+  })
+
+  test("swaps prompt, question, and permission bodies", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view, setView] = createSignal<FooterView>({ type: "prompt" })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+    expect(get(setup.renderer.root, "run-direct-footer-composer")).toBeDefined()
+
+    setView({
+      type: "question",
+      request: {
+        id: "question-1",
+        questions: [
+          {
+            question: "Streaming mode",
+            header: "Mode",
+            options: [{ label: "chunked", description: "Incremental output" }],
+            multiple: false,
+          },
+        ],
+      } as FooterView extends { type: "question"; request: infer R } ? R : never,
+    })
+    await setup.renderOnce()
+    expect(get(setup.renderer.root, "run-direct-footer-composer")).toBeUndefined()
+    expect(setup.captureCharFrame()).toContain("Questions pending")
+    expect(setup.captureCharFrame()).toContain("1. Mode")
+
+    setView({
+      type: "permission",
+      request: {
+        id: "perm-1",
+        permission: "read",
+        patterns: ["/tmp/file.txt"],
+        always: [],
+        metadata: {},
+      } as FooterView extends { type: "permission"; request: infer R } ? R : never,
+    })
+    await setup.renderOnce()
+    expect(get(setup.renderer.root, "run-direct-footer-composer")).toBeUndefined()
+    expect(setup.captureCharFrame()).toContain("Permission required")
+    expect(setup.captureCharFrame()).toContain("Permission: read")
+
+    setView({ type: "prompt" })
+    await setup.renderOnce()
+    expect(get(setup.renderer.root, "run-direct-footer-composer")).toBeDefined()
+  })
+
+  test("preserves prompt draft across permission and question views", async () => {
+    const [state] = createSignal<FooterState>({
+      phase: "idle",
+      status: "",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view, setView] = createSignal<FooterView>({ type: "prompt" })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.mockInput.typeText("draft")
+    setView({
+      type: "permission",
+      request: {
+        id: "perm-1",
+        permission: "read",
+        patterns: ["/tmp/file.txt"],
+        always: [],
+        metadata: {},
+      } as FooterView extends { type: "permission"; request: infer R } ? R : never,
+    })
+    await setup.renderOnce()
+
+    setView({
+      type: "question",
+      request: {
+        id: "question-1",
+        questions: [
+          {
+            question: "Streaming mode",
+            header: "Mode",
+            options: [{ label: "chunked", description: "Incremental output" }],
+            multiple: false,
+          },
+        ],
+      } as FooterView extends { type: "question"; request: infer R } ? R : never,
+    })
+    await setup.renderOnce()
+
+    setView({ type: "prompt" })
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(composer(setup).plainText).toBe("draft")
+  })
+
+  test("non-prompt views own keyboard while ctrl-c stays global", async () => {
+    const sent: string[] = []
+    let cycles = 0
+    let interrupts = 0
+    let exits = 0
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting permission",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "permission",
+      request: {
+        id: "perm-1",
+        permission: "read",
+        patterns: ["/tmp/file.txt"],
+        always: [],
+        metadata: {},
+      } as FooterView extends { type: "permission"; request: infer R } ? R : never,
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={(text) => {
+            sent.push(text)
+            return true
+          }}
+          onCycle={() => {
+            cycles += 1
+          }}
+          onInterrupt={() => {
+            interrupts += 1
+            return true
+          }}
+          onExitRequest={() => {
+            exits += 1
+            return true
+          }}
+          onExit={() => {
+            exits += 1
+          }}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    setup.mockInput.pressEscape()
+    setup.mockInput.pressArrow("up")
+    setup.mockInput.pressKey("t", { ctrl: true })
+    setup.mockInput.pressEnter()
+    setup.mockInput.pressKey("c", { ctrl: true })
+    await setup.renderOnce()
+
+    expect(interrupts).toBe(0)
+    expect(cycles).toBe(0)
+    expect(sent).toEqual([])
+    expect(exits).toBe(1)
   })
 })

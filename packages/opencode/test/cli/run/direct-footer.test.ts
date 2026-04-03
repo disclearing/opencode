@@ -135,6 +135,49 @@ describe("run footer", () => {
     }
   })
 
+  test("view changes resize footer and restore prompt height", async () => {
+    const ctx = await create()
+
+    try {
+      expect(ctx.setup.renderer.footerHeight).toBe(7)
+
+      ctx.footer.present({
+        type: "permission",
+        request: {
+          id: "perm-1",
+          permission: "read",
+          patterns: ["/tmp/file.txt"],
+          always: [],
+          metadata: {},
+        } as any,
+      })
+      const permission = ctx.setup.renderer.footerHeight
+      expect(permission).toBeGreaterThan(7)
+
+      ctx.footer.present({
+        type: "question",
+        request: {
+          id: "question-1",
+          questions: [
+            {
+              question: "Streaming mode",
+              header: "Mode",
+              options: [{ label: "chunked", description: "Incremental output" }],
+              multiple: false,
+            },
+          ],
+        } as any,
+      })
+      expect(ctx.setup.renderer.footerHeight).toBeGreaterThan(permission)
+
+      ctx.footer.present({ type: "prompt" })
+      expect(ctx.setup.renderer.footerHeight).toBe(7)
+      await ctx.footer.idle()
+    } finally {
+      ctx.destroy()
+    }
+  })
+
   test("does not append spacer line after assistant turn", async () => {
     const ctx = await create()
 

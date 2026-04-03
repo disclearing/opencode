@@ -36,6 +36,9 @@ type RunFooterOptions = {
   onExit?: () => void
 }
 
+const PERMISSION_ROWS = 4
+const QUESTION_ROWS = 5
+
 export class RunFooter implements FooterApi {
   private closed = false
   private destroyed = false
@@ -190,6 +193,7 @@ export class RunFooter implements FooterApi {
     }
 
     this.setView(view)
+    this.applyHeight()
   }
 
   public append(commit: StreamCommit): void {
@@ -282,6 +286,18 @@ export class RunFooter implements FooterApi {
     this.patch({ status })
   }
 
+  private applyHeight(): void {
+    const body =
+      this.view().type === "permission" ? PERMISSION_ROWS : this.view().type === "question" ? QUESTION_ROWS : this.rows
+    const min = this.base + TEXTAREA_MIN_ROWS
+    const max = this.base + TEXTAREA_MAX_ROWS
+    const height = Math.max(min, Math.min(max, this.base + body))
+
+    if (height !== this.renderer.footerHeight) {
+      this.renderer.footerHeight = height
+    }
+  }
+
   private syncRows = (value: number): void => {
     if (this.destroyed || this.renderer.isDestroyed) {
       return
@@ -293,12 +309,8 @@ export class RunFooter implements FooterApi {
     }
 
     this.rows = rows
-    const min = this.base + TEXTAREA_MIN_ROWS
-    const max = this.base + TEXTAREA_MAX_ROWS
-    const height = Math.max(min, Math.min(max, this.base + rows))
-
-    if (height !== this.renderer.footerHeight) {
-      this.renderer.footerHeight = height
+    if (this.view().type === "prompt") {
+      this.applyHeight()
     }
   }
 

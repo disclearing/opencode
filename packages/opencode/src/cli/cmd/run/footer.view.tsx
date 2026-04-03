@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { StyledText, bg, fg, type KeyBinding } from "@opentui/core"
-import { useTerminalDimensions } from "@opentui/solid"
-import { Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import "opentui-spinner/solid"
 import { Keybind } from "../../../util/keybind"
 import { createColors, createFrames } from "../tui/ui/spinner"
@@ -150,8 +150,109 @@ export function hintFlags(width: number) {
   }
 }
 
+function RunPromptBody(props: {
+  theme: () => RunFooterTheme
+  placeholder: () => StyledText | string
+  bindings: () => KeyBinding[]
+  onSubmit: () => void
+  onKeyDown: (event: Key) => void
+  onContentChange: () => void
+  bind: (area?: Area) => void
+}) {
+  let item: Area | undefined
+
+  onMount(() => {
+    props.bind(item)
+  })
+
+  onCleanup(() => {
+    props.bind(undefined)
+  })
+
+  return (
+    <textarea
+      id="run-direct-footer-composer"
+      width="100%"
+      minHeight={TEXTAREA_MIN_ROWS}
+      maxHeight={TEXTAREA_MAX_ROWS}
+      wrapMode="word"
+      placeholder={props.placeholder()}
+      placeholderColor={props.theme().muted}
+      textColor={props.theme().text}
+      focusedTextColor={props.theme().text}
+      backgroundColor={props.theme().surface}
+      focusedBackgroundColor={props.theme().surface}
+      cursorColor={props.theme().text}
+      keyBindings={props.bindings()}
+      onSubmit={props.onSubmit}
+      onKeyDown={props.onKeyDown}
+      onContentChange={props.onContentChange}
+      ref={(next) => {
+        item = next as Area
+      }}
+    />
+  )
+}
+
+function RunBodyShell(props: {
+  id: string
+  theme: () => RunFooterTheme
+  title: string
+  lines: string[]
+  hint: string
+}) {
+  return (
+    <box id={props.id} width="100%" height="100%" flexDirection="column" gap={1}>
+      <scrollbox
+        id={`${props.id}-scroll`}
+        width="100%"
+        height="100%"
+        verticalScrollbarOptions={{
+          trackOptions: {
+            backgroundColor: props.theme().surface,
+            foregroundColor: props.theme().line,
+          },
+        }}
+      >
+        <box width="100%" flexDirection="column" gap={1}>
+          <text id={`${props.id}-title`} fg={props.theme().highlight} wrapMode="word">
+            {props.title}
+          </text>
+          <For each={props.lines}>
+            {(line) => (
+              <text fg={props.theme().text} wrapMode="word">
+                {line}
+              </text>
+            )}
+          </For>
+        </box>
+      </scrollbox>
+      <text id={`${props.id}-hint`} fg={props.theme().muted} wrapMode="word">
+        {props.hint}
+      </text>
+    </box>
+  )
+}
+
+function permissionLines(view: Extract<FooterView, { type: "permission" }>): string[] {
+  const rows = [`Permission: ${view.request.permission}`]
+  if (view.request.patterns.length > 0) {
+    rows.push(...view.request.patterns.slice(0, 3).map((item) => `- ${item}`))
+    if (view.request.patterns.length > 3) {
+      rows.push(`... and ${view.request.patterns.length - 3} more`)
+    }
+  }
+  return rows
+}
+
+function questionLines(view: Extract<FooterView, { type: "question" }>): string[] {
+  return view.request.questions.map((item, index) => `${index + 1}. ${item.header || item.question}`)
+}
+
 export function RunFooterView(props: RunFooterViewProps) {
   const term = useTerminalDimensions()
+  const active = createMemo<FooterView>(() => props.view?.() ?? { type: "prompt" })
+  const promptView = createMemo(() => active().type === "prompt")
   const leaders = createMemo(() => Keybind.parse(props.keybinds.leader))
   const cycles = createMemo(() => Keybind.parse(props.keybinds.variantCycle))
   const interrupts = createMemo(() => Keybind.parse(props.keybinds.interrupt))
@@ -191,6 +292,7 @@ export function RunFooterView(props: RunFooterViewProps) {
 
     return new StyledText([bg(theme().surface)(fg(theme().muted)('Ask anything... "Fix a TODO in the codebase"'))])
   })
+  const [draft, setDraft] = createSignal("")
 
   const history: History = {
     items: (props.history ?? [])
@@ -206,6 +308,7 @@ export function RunFooterView(props: RunFooterViewProps) {
   let leader = false
   let timeout: NodeJS.Timeout | undefined
   let rowsTick = false
+  let prev = active().type
 
   const clearLeader = () => {
     leader = false
@@ -242,6 +345,43 @@ export function RunFooterView(props: RunFooterViewProps) {
       rowsTick = false
       syncRows()
     })
+  }
+
+  const bindArea = (next?: Area) => {
+    if (area === next) {
+      return
+    }
+
+    if (area && !area.isDestroyed) {
+      area.off("line-info-change", scheduleRows)
+    }
+
+    area = next
+    if (!area || area.isDestroyed) {
+      return
+    }
+
+    area.on("line-info-change", scheduleRows)
+    queueMicrotask(() => {
+      if (!area || area.isDestroyed || !promptView()) {
+        return
+      }
+
+      if (area.plainText !== draft()) {
+        area.setText(draft())
+      }
+      area.cursorOffset = area.plainText.length
+      scheduleRows()
+      area.focus()
+    })
+  }
+
+  const syncDraft = () => {
+    if (!area || area.isDestroyed) {
+      return
+    }
+
+    setDraft(area.plainText)
   }
 
   const push = (text: string) => {
@@ -391,6 +531,36 @@ export function RunFooterView(props: RunFooterViewProps) {
     }
   }
 
+  useKeyboard((event) => {
+    if (promptView()) {
+      return
+    }
+
+    if (event.ctrl && event.name === "c") {
+      const handled = props.onExitRequest ? props.onExitRequest() : (props.onExit(), true)
+      if (handled) {
+        event.preventDefault()
+      }
+      return
+    }
+
+    const key = toKeyInfo(event, false)
+    if (leader || match(leaders(), key)) {
+      clearLeader()
+      event.preventDefault()
+      return
+    }
+
+    if (match(cycles(), key) || match(historyPrevious(), key) || match(historyNext(), key)) {
+      event.preventDefault()
+      return
+    }
+
+    if (["escape", "tab", "return", "up", "down", "left", "right", "h", "j", "k", "l"].includes(event.name)) {
+      event.preventDefault()
+    }
+  })
+
   const onSubmit = () => {
     if (!area || area.isDestroyed) {
       return
@@ -408,6 +578,7 @@ export function RunFooterView(props: RunFooterViewProps) {
     }
 
     area.setText("")
+    setDraft("")
     scheduleRows()
     area.focus()
     queueMicrotask(() => {
@@ -421,40 +592,31 @@ export function RunFooterView(props: RunFooterViewProps) {
       }
 
       area.setText(text)
+      setDraft(text)
       area.cursorOffset = area.plainText.length
       syncRows()
       area.focus()
     })
   }
 
-  onMount(() => {
-    if (!area || area.isDestroyed) {
-      return
-    }
-
-    area.on("line-info-change", scheduleRows)
-    scheduleRows()
-    area.focus()
-  })
-
   onCleanup(() => {
     clearLeader()
 
-    if (!area || area.isDestroyed) {
-      return
+    if (area && !area.isDestroyed) {
+      area.off("line-info-change", scheduleRows)
     }
-
-    area.off("line-info-change", scheduleRows)
   })
 
   createEffect(() => {
     term().width
-    scheduleRows()
+    if (promptView()) {
+      scheduleRows()
+    }
   })
 
   createEffect(() => {
     props.state().phase
-    if (!area || area.isDestroyed || props.state().phase !== "idle") {
+    if (!promptView() || !area || area.isDestroyed || props.state().phase !== "idle") {
       return
     }
 
@@ -462,6 +624,37 @@ export function RunFooterView(props: RunFooterViewProps) {
       if (!area || area.isDestroyed) {
         return
       }
+      area.focus()
+    })
+  })
+
+  createEffect(() => {
+    const type = active().type
+    if (type === prev) {
+      return
+    }
+
+    if (prev === "prompt") {
+      syncDraft()
+    }
+
+    clearLeader()
+    prev = type
+
+    if (type !== "prompt") {
+      return
+    }
+
+    queueMicrotask(() => {
+      if (!area || area.isDestroyed) {
+        return
+      }
+
+      if (area.plainText !== draft()) {
+        area.setText(draft())
+      }
+      area.cursorOffset = area.plainText.length
+      scheduleRows()
       area.focus()
     })
   })
@@ -502,27 +695,42 @@ export function RunFooterView(props: RunFooterViewProps) {
           backgroundColor={theme().surface}
           gap={0}
         >
-          <textarea
-            id="run-direct-footer-composer"
-            width="100%"
-            minHeight={TEXTAREA_MIN_ROWS}
-            maxHeight={TEXTAREA_MAX_ROWS}
-            wrapMode="word"
-            placeholder={placeholder()}
-            placeholderColor={theme().muted}
-            textColor={theme().text}
-            focusedTextColor={theme().text}
-            backgroundColor={theme().surface}
-            focusedBackgroundColor={theme().surface}
-            cursorColor={theme().text}
-            keyBindings={bindings()}
-            onSubmit={onSubmit}
-            onKeyDown={onKeyDown}
-            onContentChange={scheduleRows}
-            ref={(item) => {
-              area = item as Area
-            }}
-          />
+          <box id="run-direct-footer-body" width="100%" flexGrow={1} flexShrink={1} flexDirection="column">
+            <Switch>
+              <Match when={active().type === "prompt"}>
+                <RunPromptBody
+                  theme={theme}
+                  placeholder={placeholder}
+                  bindings={bindings}
+                  onSubmit={onSubmit}
+                  onKeyDown={onKeyDown}
+                  onContentChange={() => {
+                    syncDraft()
+                    scheduleRows()
+                  }}
+                  bind={bindArea}
+                />
+              </Match>
+              <Match when={active().type === "permission"}>
+                <RunBodyShell
+                  id="run-direct-footer-permission-body"
+                  theme={theme}
+                  title="Permission required"
+                  lines={permissionLines(active() as Extract<FooterView, { type: "permission" }>)}
+                  hint="Permission prompt active"
+                />
+              </Match>
+              <Match when={active().type === "question"}>
+                <RunBodyShell
+                  id="run-direct-footer-question-body"
+                  theme={theme}
+                  title="Questions pending"
+                  lines={questionLines(active() as Extract<FooterView, { type: "question" }>)}
+                  hint="Question prompt active"
+                />
+              </Match>
+            </Switch>
+          </box>
 
           <box id="run-direct-footer-meta-row" width="100%" flexDirection="row" gap={1} flexShrink={0} paddingTop={1}>
             <text id="run-direct-footer-agent" fg={theme().highlight} wrapMode="none" truncate flexShrink={0}>
