@@ -10,7 +10,7 @@ import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { formatUnknownError, runPromptTurn } from "./stream"
 import { resolveRunTheme } from "./theme"
 import { trace } from "./trace"
-import type { FooterApi, FooterKeybinds, FooterPatch, RunInput } from "./types"
+import type { FooterApi, FooterKeybinds, FooterPatch, RunDiffStyle, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 7
 const HISTORY_LIMIT = 200
@@ -316,6 +316,15 @@ async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
   }
 }
 
+async function resolveDiffStyle(): Promise<RunDiffStyle> {
+  try {
+    const config = await TuiConfig.get()
+    return config.diff_style ?? "auto"
+  } catch {
+    return "auto"
+  }
+}
+
 function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): {
   agentLabel: string
   modelLabel: string
@@ -585,6 +594,7 @@ function waitReady<T>(task: Promise<T>, signal: AbortSignal): Promise<T | undefi
 
 export async function runInteractiveBootMode(input: RunBootInput): Promise<void> {
   const keybindsTask = resolveFooterKeybinds()
+  const diffTask = resolveDiffStyle()
   const ready = input.boot()
   const seeded = Boolean(input.initialInput?.trim())
   const state: SplashState = {
@@ -618,7 +628,7 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
   })
   const theme = await resolveRunTheme(renderer)
   renderer.setBackgroundColor(theme.background)
-  const keybinds = await keybindsTask
+  const [keybinds, diffStyle] = await Promise.all([keybindsTask, diffTask])
 
   const footer = new RunFooter(renderer, {
     ...footerLabels({
@@ -630,6 +640,7 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
     history: [],
     theme,
     keybinds,
+    diffStyle,
     onCycleVariant: () => {
       const model = ctx?.model ?? input.model
       if (!model || variants.length === 0) {
@@ -863,6 +874,7 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
 
 export async function runInteractiveMode(input: RunInput): Promise<void> {
   const keybindsTask = resolveFooterKeybinds()
+  const diffTask = resolveDiffStyle()
   const modelTask = resolveModelInfo(input.sdk, input.model)
   const sessionTask = resolveSessionInfo(input.sdk, input.sessionID, input.model)
   const savedTask = resolveSavedVariant(input.model)
@@ -890,7 +902,12 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
   })
   const theme = await resolveRunTheme(renderer)
   renderer.setBackgroundColor(theme.background)
-  const [keybinds, session, savedVariant] = await Promise.all([keybindsTask, sessionTask, savedTask])
+  const [keybinds, diffStyle, session, savedVariant] = await Promise.all([
+    keybindsTask,
+    diffTask,
+    sessionTask,
+    savedTask,
+  ])
   const meta = splashMeta({
     title: splashTitle(input.sessionTitle, session.history),
     session_id: input.sessionID,
@@ -918,6 +935,7 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     history: session.history,
     theme,
     keybinds,
+    diffStyle,
     onCycleVariant: () => {
       if (!input.model || variants.length === 0) {
         return {

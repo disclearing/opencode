@@ -3,7 +3,7 @@ import { TextAttributes } from "@opentui/core"
 import { testRender } from "@opentui/solid"
 import { blockWriter, entryWriter, normalizeEntry } from "../../../src/cli/cmd/run/scrollback"
 import { RUN_THEME_FALLBACK } from "../../../src/cli/cmd/run/theme"
-import type { StreamCommit } from "../../../src/cli/cmd/run/types"
+import type { ScrollbackOptions, StreamCommit } from "../../../src/cli/cmd/run/types"
 
 function make(kind: StreamCommit["kind"], text: string, phase: StreamCommit["phase"] = "progress"): StreamCommit {
   return {
@@ -45,8 +45,12 @@ function makeTool(
 }
 
 async function draw(commit: StreamCommit) {
+  return drawWidth(commit, 80)
+}
+
+async function drawWidth(commit: StreamCommit, width: number, opts: ScrollbackOptions = {}) {
   const setup = await testRender(() => null, {
-    width: 80,
+    width,
     height: 12,
   })
 
@@ -54,15 +58,19 @@ async function draw(commit: StreamCommit) {
     const snap = entryWriter(
       commit,
       RUN_THEME_FALLBACK.entry,
+      opts,
     )({
-      width: 80,
+      width,
       widthMethod: setup.renderer.widthMethod,
       renderContext: (setup.renderer.root as any)._ctx,
     })
     const root = snap.root as any
+    const nodes = walk(root)
     return {
       snap,
       root,
+      nodes,
+      textNodes: nodes.filter((node) => typeof node?.plainText === "string"),
       text: root.plainText as string,
       fg: root.fg,
       attrs: root.attributes ?? 0,
@@ -98,6 +106,15 @@ async function drawBlock(text: string) {
   } finally {
     setup.renderer.destroy()
   }
+}
+
+function walk(root: any): any[] {
+  const list = [root]
+  const children = typeof root?.getChildren === "function" ? root.getChildren() : []
+  for (const child of children) {
+    list.push(...walk(child))
+  }
+  return list
 }
 
 function same(a: unknown, b: unknown): boolean {
@@ -419,5 +436,280 @@ describe("run scrollback", () => {
     const out = await drawBlock("Session   title\nContinue  opencode -s abc")
     expect(out.text).toContain("Session   title")
     expect(out.text).toContain("Continue  opencode -s abc")
+  })
+
+  test("tool start and final rows are standalone blocks", async () => {
+    const start = await draw(
+      makeTool("[tool:bash] running bash", "start", "bash", {
+        command: "git status --short",
+        description: "Shell command",
+      }),
+    )
+    expect(start.snap.startOnNewLine).toBe(true)
+    expect(start.snap.trailingNewline).toBe(true)
+
+    const final = await draw(
+      makeTool(
+        "[tool:bash:end]",
+        "final",
+        "bash",
+        {
+          command: "git status --short",
+        },
+        {
+          status: "completed",
+          metadata: { exitCode: 0 },
+        },
+      ),
+    )
+    expect(final.snap.startOnNewLine).toBe(true)
+    expect(final.snap.trailingNewline).toBe(true)
+  })
+
+  test("assistant progress rows stitch without extra newline", async () => {
+    const out = await draw(make("assistant", "chunk"))
+    expect(out.snap.startOnNewLine).toBe(false)
+    expect(out.snap.trailingNewline).toBe(false)
+  })
+
+  test("gap commits create exactly one blank line before first streamed part", async () => {
+    const out = await draw({
+      kind: "assistant",
+      text: "",
+      phase: "progress",
+      source: "assistant",
+      partID: "part-1",
+      gap: true,
+    })
+
+    expect(out.snap.startOnNewLine).toBe(false)
+    expect(out.snap.trailingNewline).toBe(true)
+    expect(out.snap.width).toBe(0)
+  })
+
+  test("write renders a code snapshot with inferred filetype and diagnostics tail", async () => {
+    const out = await draw(
+      makeTool(
+        "[tool:write:end]",
+        "final",
+        "write",
+        {
+          filePath: "src/test.tsx",
+          content: "export const x = 1\n",
+        },
+        {
+          status: "completed",
+          metadata: {
+            diagnostics: {
+              "src/test.tsx": [
+                {
+                  severity: 1,
+                  message: "bad thing",
+                  range: { start: { line: 1, character: 2 } },
+                },
+              ],
+            },
+          },
+        },
+      ),
+    )
+
+    expect(out.root.constructor.name).toBe("BoxRenderable")
+    const code = out.nodes.find((node) => node.constructor.name === "CodeRenderable") as any
+    expect(code).toBeDefined()
+    expect(code.filetype).toBe("typescript")
+    expect(code.content).toBe("export const x = 1\n")
+    expect(out.textNodes.some((node) => node.plainText === "Error [2:3] bad thing")).toBe(true)
+  })
+
+  test("edit renders a diff snapshot using the width-based view rule", async () => {
+    const narrow = await drawWidth(
+      makeTool(
+        "[tool:edit:end]",
+        "final",
+        "edit",
+        {
+          filePath: "src/test.ts",
+        },
+        {
+          status: "completed",
+          metadata: {
+            diff: "@@ -1 +1 @@\n-old\n+new\n",
+          },
+        },
+      ),
+      80,
+    )
+    const wide = await drawWidth(
+      makeTool(
+        "[tool:edit:end]",
+        "final",
+        "edit",
+        {
+          filePath: "src/test.ts",
+        },
+        {
+          status: "completed",
+          metadata: {
+            diff: "@@ -1 +1 @@\n-old\n+new\n",
+          },
+        },
+      ),
+      140,
+    )
+
+    const a = narrow.nodes.find((node) => node.constructor.name === "DiffRenderable") as any
+    const b = wide.nodes.find((node) => node.constructor.name === "DiffRenderable") as any
+    expect(a.view).toBe("unified")
+    expect(b.view).toBe("split")
+  })
+
+  test("stacked diff preference forces unified direct snapshots", async () => {
+    const out = await drawWidth(
+      makeTool(
+        "[tool:edit:end]",
+        "final",
+        "edit",
+        {
+          filePath: "src/test.ts",
+        },
+        {
+          status: "completed",
+          metadata: {
+            diff: "@@ -1 +1 @@\n-old\n+new\n",
+          },
+        },
+      ),
+      140,
+      { diffStyle: "stacked" },
+    )
+
+    const diff = out.nodes.find((node) => node.constructor.name === "DiffRenderable") as any
+    expect(diff.view).toBe("unified")
+  })
+
+  test("apply_patch renders one stable block per touched file with fullscreen titles", async () => {
+    const out = await draw(
+      makeTool(
+        "[tool:apply_patch:end]",
+        "final",
+        "apply_patch",
+        {},
+        {
+          status: "completed",
+          metadata: {
+            files: [
+              {
+                type: "add",
+                relativePath: "src/new.ts",
+                filePath: "src/new.ts",
+                diff: "@@ -0,0 +1 @@\n+export const x = 1\n",
+              },
+              {
+                type: "delete",
+                relativePath: "src/old.ts",
+                filePath: "src/old.ts",
+                deletions: 3,
+              },
+            ],
+          },
+        },
+      ),
+    )
+
+    expect(out.textNodes.some((node) => node.plainText === "# Created src/new.ts")).toBe(true)
+    expect(out.textNodes.some((node) => node.plainText === "# Deleted src/old.ts")).toBe(true)
+    expect(out.textNodes.some((node) => node.plainText === "-3 lines")).toBe(true)
+    expect(out.nodes.filter((node) => node.constructor.name === "DiffRenderable")).toHaveLength(1)
+  })
+
+  test("task, todowrite, and question render grouped structured snapshots", async () => {
+    const task = await draw(
+      makeTool(
+        "[tool:task:end]",
+        "final",
+        "task",
+        {
+          subagent_type: "general",
+          description: "investigate stream",
+        },
+        {
+          status: "completed",
+          title: "collecting logs",
+          metadata: {
+            toolCalls: 3,
+            sessionId: "sess-123",
+          },
+          time: { start: 0, end: 1000 },
+        },
+      ),
+    )
+    expect(task.root.constructor.name).toBe("BoxRenderable")
+    expect(task.textNodes.some((node) => node.plainText === "# General Task")).toBe(true)
+    expect(task.textNodes.some((node) => node.plainText === "◉ investigate stream")).toBe(true)
+    expect(task.textNodes.some((node) => node.plainText === "↳ collecting logs")).toBe(true)
+
+    const todo = await draw(
+      makeTool(
+        "[tool:todowrite:end]",
+        "final",
+        "todowrite",
+        {
+          todos: [
+            { content: "a", status: "completed" },
+            { content: "b", status: "in_progress" },
+          ],
+        },
+        {
+          status: "completed",
+        },
+      ),
+    )
+    expect(todo.root.constructor.name).toBe("BoxRenderable")
+    expect(todo.textNodes.some((node) => node.plainText === "# Todos")).toBe(true)
+    expect(todo.textNodes.some((node) => node.plainText === "[x] a")).toBe(true)
+    expect(todo.textNodes.some((node) => node.plainText === "[>] b")).toBe(true)
+
+    const question = await draw(
+      makeTool(
+        "[tool:question:end]",
+        "final",
+        "question",
+        {
+          questions: [{ question: "Pick one", options: [{ label: "A", description: "a" }] }],
+        },
+        {
+          status: "completed",
+          metadata: {
+            answers: [["A"]],
+          },
+        },
+      ),
+    )
+    expect(question.root.constructor.name).toBe("BoxRenderable")
+    expect(question.textNodes.some((node) => node.plainText === "# Questions")).toBe(true)
+    expect(question.textNodes.some((node) => node.plainText === "Pick one")).toBe(true)
+    expect(question.textNodes.some((node) => node.plainText === "A")).toBe(true)
+  })
+
+  test("unknown file extensions keep filetype undefined", async () => {
+    const out = await draw(
+      makeTool(
+        "[tool:write:end]",
+        "final",
+        "write",
+        {
+          filePath: "src/test.unknownext",
+          content: "plain text\n",
+        },
+        {
+          status: "completed",
+          metadata: {},
+        },
+      ),
+    )
+
+    const code = out.nodes.find((node) => node.constructor.name === "CodeRenderable") as any
+    expect(code.filetype).toBeUndefined()
   })
 })

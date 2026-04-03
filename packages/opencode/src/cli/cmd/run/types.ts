@@ -40,6 +40,12 @@ export type FooterState = {
 
 export type FooterPatch = Partial<FooterState>
 
+export type RunDiffStyle = "auto" | "stacked"
+
+export type ScrollbackOptions = {
+  diffStyle?: RunDiffStyle
+}
+
 export type FooterView =
   | { type: "prompt" }
   | { type: "permission"; request: PermissionRequest }

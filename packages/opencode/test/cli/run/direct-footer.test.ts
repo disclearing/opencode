@@ -35,6 +35,7 @@ async function create() {
     modelLabel: "Model default",
     first: false,
     theme: RUN_THEME_FALLBACK,
+    diffStyle: "auto",
     keybinds: {
       leader: "ctrl+x",
       variantCycle: "ctrl+t,<leader>t",

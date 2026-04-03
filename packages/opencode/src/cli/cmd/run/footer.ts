@@ -14,6 +14,7 @@ import type {
   PermissionReply,
   QuestionReject,
   QuestionReply,
+  RunDiffStyle,
   StreamCommit,
 } from "./types"
 
@@ -29,6 +30,7 @@ type RunFooterOptions = {
   history?: string[]
   theme: RunTheme
   keybinds: FooterKeybinds
+  diffStyle: RunDiffStyle
   onCycleVariant?: () => CycleResult | void
   onInterrupt?: () => void
   onExit?: () => void
@@ -472,7 +474,9 @@ export class RunFooter implements FooterApi {
         typeof item.partID !== "string" ||
         item.partID.length === 0
       ) {
-        this.renderer.writeToScrollback(entryWriter(item, this.options.theme.entry))
+        this.renderer.writeToScrollback(
+          entryWriter(item, this.options.theme.entry, { diffStyle: this.options.diffStyle }),
+        )
         continue
       }
 
@@ -481,7 +485,9 @@ export class RunFooter implements FooterApi {
       this.seen.add(part)
 
       if (!first) {
-        this.renderer.writeToScrollback(entryWriter(item, this.options.theme.entry))
+        this.renderer.writeToScrollback(
+          entryWriter(item, this.options.theme.entry, { diffStyle: this.options.diffStyle }),
+        )
         continue
       }
 
@@ -493,9 +499,12 @@ export class RunFooter implements FooterApi {
             gap: true,
           },
           this.options.theme.entry,
+          { diffStyle: this.options.diffStyle },
         ),
       )
-      this.renderer.writeToScrollback(entryWriter(item, this.options.theme.entry))
+      this.renderer.writeToScrollback(
+        entryWriter(item, this.options.theme.entry, { diffStyle: this.options.diffStyle }),
+      )
     }
   }
 }
