@@ -5,7 +5,15 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import "opentui-spinner/solid"
 import { Keybind } from "../../../util/keybind"
 import { createColors, createFrames } from "../tui/ui/spinner"
-import type { FooterKeybinds, FooterState, FooterView } from "./types"
+import {
+  RunPermissionBody,
+  createPermissionBodyState,
+  permissionOptions,
+  permissionReply,
+  type PermissionBodyState,
+  type PermissionOption,
+} from "./footer.permission"
+import type { FooterKeybinds, FooterState, FooterView, PermissionReply, RunDiffStyle } from "./types"
 import { RUN_THEME_FALLBACK, type RunFooterTheme } from "./theme"
 
 const LEADER_TIMEOUT_MS = 2000
@@ -68,10 +76,12 @@ type RunFooterViewProps = {
   state: () => FooterState
   view?: () => FooterView
   theme?: RunFooterTheme
+  diffStyle?: RunDiffStyle
   keybinds: FooterKeybinds
   history?: string[]
   agent: string
   onSubmit: (text: string) => boolean
+  onPermissionReply?: (input: PermissionReply) => void | Promise<void>
   onCycle: () => void
   onInterrupt: () => boolean
   onExitRequest?: () => boolean
@@ -234,17 +244,6 @@ function RunBodyShell(props: {
   )
 }
 
-function permissionLines(view: Extract<FooterView, { type: "permission" }>): string[] {
-  const rows = [`Permission: ${view.request.permission}`]
-  if (view.request.patterns.length > 0) {
-    rows.push(...view.request.patterns.slice(0, 3).map((item) => `- ${item}`))
-    if (view.request.patterns.length > 3) {
-      rows.push(`... and ${view.request.patterns.length - 3} more`)
-    }
-  }
-  return rows
-}
-
 function questionLines(view: Extract<FooterView, { type: "question" }>): string[] {
   return view.request.questions.map((item, index) => `${index + 1}. ${item.header || item.question}`)
 }
@@ -293,6 +292,11 @@ export function RunFooterView(props: RunFooterViewProps) {
     return new StyledText([bg(theme().surface)(fg(theme().muted)('Ask anything... "Fix a TODO in the codebase"'))])
   })
   const [draft, setDraft] = createSignal("")
+  const [permission, setPermission] = createSignal<PermissionBodyState>(createPermissionBodyState(""))
+  const permissionView = createMemo<Extract<FooterView, { type: "permission" }> | undefined>(() => {
+    const view = active()
+    return view.type === "permission" ? view : undefined
+  })
 
   const history: History = {
     items: (props.history ?? [])
@@ -480,6 +484,176 @@ export function RunFooterView(props: RunFooterViewProps) {
     return true
   }
 
+  const shiftPermission = (dir: -1 | 1) => {
+    const state = permission()
+    const opts = permissionOptions(state.stage)
+    if (opts.length === 0) {
+      return
+    }
+
+    const index = Math.max(0, opts.indexOf(state.selected))
+    const next = opts[(index + dir + opts.length) % opts.length]
+    setPermission((prev) => ({
+      ...prev,
+      selected: next,
+    }))
+  }
+
+  const beginPermissionReply = async (next: PermissionReply) => {
+    if (!props.onPermissionReply) {
+      props.onStatus("permission queue unavailable")
+      return
+    }
+
+    setPermission((prev) => ({
+      ...prev,
+      submitting: true,
+    }))
+
+    try {
+      await props.onPermissionReply(next)
+    } catch {
+      setPermission((prev) => ({
+        ...prev,
+        submitting: false,
+      }))
+    }
+  }
+
+  const runPermission = (option: PermissionOption) => {
+    const view = permissionView()
+    const state = permission()
+    if (!view || state.submitting) {
+      return
+    }
+
+    if (state.stage === "permission") {
+      if (option === "always") {
+        setPermission((prev) => ({
+          ...prev,
+          stage: "always",
+          selected: "confirm",
+        }))
+        return
+      }
+
+      if (option === "reject") {
+        setPermission((prev) => ({
+          ...prev,
+          stage: "reject",
+          selected: "reject",
+        }))
+        return
+      }
+
+      void beginPermissionReply(permissionReply(view.request.id, "once"))
+      return
+    }
+
+    if (state.stage === "always") {
+      if (option === "cancel") {
+        setPermission((prev) => ({
+          ...prev,
+          stage: "permission",
+          selected: "always",
+        }))
+        return
+      }
+
+      void beginPermissionReply(permissionReply(view.request.id, "always"))
+    }
+  }
+
+  const handlePermissionKey = (event: Key): boolean => {
+    const state = permission()
+    if (!permissionView()) {
+      return false
+    }
+
+    if (state.stage === "reject") {
+      return false
+    }
+
+    if (state.submitting) {
+      if (["left", "right", "h", "l", "return", "escape"].includes(event.name)) {
+        event.preventDefault()
+        return true
+      }
+      return false
+    }
+
+    if (event.name === "left" || event.name === "h") {
+      shiftPermission(-1)
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name === "right" || event.name === "l") {
+      shiftPermission(1)
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name === "return") {
+      runPermission(permission().selected)
+      event.preventDefault()
+      return true
+    }
+
+    if (event.name !== "escape") {
+      return false
+    }
+
+    if (state.stage === "always") {
+      setPermission((prev) => ({
+        ...prev,
+        stage: "permission",
+        selected: "always",
+      }))
+      event.preventDefault()
+      return true
+    }
+
+    setPermission((prev) => ({
+      ...prev,
+      stage: "reject",
+      selected: "reject",
+    }))
+    event.preventDefault()
+    return true
+  }
+
+  const onPermissionHover = (option: PermissionOption) => {
+    setPermission((prev) => ({
+      ...prev,
+      selected: option,
+    }))
+  }
+
+  const onPermissionMessage = (text: string) => {
+    setPermission((prev) => ({
+      ...prev,
+      message: text,
+    }))
+  }
+
+  const onPermissionReject = () => {
+    const view = permissionView()
+    if (!view || permission().submitting) {
+      return
+    }
+
+    void beginPermissionReply(permissionReply(view.request.id, "reject", permission().message))
+  }
+
+  const onPermissionCancel = () => {
+    setPermission((prev) => ({
+      ...prev,
+      stage: "permission",
+      selected: "reject",
+    }))
+  }
+
   const onKeyDown = (event: Key) => {
     if (event.ctrl && event.name === "c") {
       const handled = props.onExitRequest ? props.onExitRequest() : (props.onExit(), true)
@@ -544,6 +718,18 @@ export function RunFooterView(props: RunFooterViewProps) {
       return
     }
 
+    if (permissionView()) {
+      if (handlePermissionKey(event)) {
+        return
+      }
+
+      if (permission().stage === "reject") {
+        return
+      }
+
+      return
+    }
+
     const key = toKeyInfo(event, false)
     if (leader || match(leaders(), key)) {
       clearLeader()
@@ -556,7 +742,7 @@ export function RunFooterView(props: RunFooterViewProps) {
       return
     }
 
-    if (["escape", "tab", "return", "up", "down", "left", "right", "h", "j", "k", "l"].includes(event.name)) {
+    if (["escape", "tab", "return", "up", "down", "left", "right"].includes(event.name)) {
       event.preventDefault()
     }
   })
@@ -659,6 +845,19 @@ export function RunFooterView(props: RunFooterViewProps) {
     })
   })
 
+  createEffect(() => {
+    const view = permissionView()
+    if (!view) {
+      return
+    }
+
+    if (permission().requestID === view.request.id) {
+      return
+    }
+
+    setPermission(createPermissionBodyState(view.request.id))
+  })
+
   return (
     <box
       id="run-direct-footer-shell"
@@ -712,12 +911,16 @@ export function RunFooterView(props: RunFooterViewProps) {
                 />
               </Match>
               <Match when={active().type === "permission"}>
-                <RunBodyShell
-                  id="run-direct-footer-permission-body"
-                  theme={theme}
-                  title="Permission required"
-                  lines={permissionLines(active() as Extract<FooterView, { type: "permission" }>)}
-                  hint="Permission prompt active"
+                <RunPermissionBody
+                  request={permissionView()!.request}
+                  state={permission()}
+                  theme={theme()}
+                  diffStyle={props.diffStyle}
+                  onHover={onPermissionHover}
+                  onSelect={runPermission}
+                  onMessage={onPermissionMessage}
+                  onConfirmReject={onPermissionReject}
+                  onCancelReject={onPermissionCancel}
                 />
               </Match>
               <Match when={active().type === "question"}>

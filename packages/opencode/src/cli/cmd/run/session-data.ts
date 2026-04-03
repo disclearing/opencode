@@ -19,6 +19,7 @@ type Tokens = {
 
 type PartKind = "assistant" | "reasoning"
 type MessageRole = "assistant" | "user"
+type Dict = Record<string, unknown>
 
 export type SessionCommit = StreamCommit
 
@@ -26,6 +27,7 @@ export type SessionData = {
   announced: boolean
   ids: Set<string>
   tools: Set<string>
+  call: Map<string, Dict>
   permissions: PermissionRequest[]
   questions: QuestionRequest[]
   role: Map<string, MessageRole>
@@ -56,6 +58,7 @@ export function createSessionData(): SessionData {
     announced: false,
     ids: new Set(),
     tools: new Set(),
+    call: new Map(),
     permissions: [],
     questions: [],
     role: new Map(),
@@ -211,6 +214,66 @@ function remove<T extends { id: string }>(list: T[], id: string): boolean {
 
   list.splice(idx, 1)
   return true
+}
+
+function key(msg: string, call: string): string {
+  return `${msg}:${call}`
+}
+
+function enrichPermission(data: SessionData, request: PermissionRequest): PermissionRequest {
+  if (!request.tool) {
+    return request
+  }
+
+  const input = data.call.get(key(request.tool.messageID, request.tool.callID))
+  if (!input) {
+    return request
+  }
+
+  const meta = request.metadata ?? {}
+  if (meta.input === input) {
+    return request
+  }
+
+  return {
+    ...request,
+    metadata: {
+      ...meta,
+      input,
+    },
+  }
+}
+
+function syncPermission(data: SessionData, part: ToolPart): FooterOutput | undefined {
+  data.call.set(key(part.messageID, part.callID), part.state.input)
+  if (data.permissions.length === 0) {
+    return
+  }
+
+  let changed = false
+  let active = false
+  data.permissions = data.permissions.map((request, index) => {
+    if (!request.tool || request.tool.messageID !== part.messageID || request.tool.callID !== part.callID) {
+      return request
+    }
+
+    const next = enrichPermission(data, request)
+    if (next === request) {
+      return request
+    }
+
+    changed = true
+    active ||= index === 0
+    return next
+  })
+
+  if (!changed || !active) {
+    return
+  }
+
+  return {
+    view: pickView(data),
+  }
 }
 
 function toolStatus(part: ToolPart): string {
@@ -565,61 +628,66 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    if (part.type === "tool" && part.state.status === "running") {
-      if (data.ids.has(part.id)) {
-        return out(data, commits)
+    if (part.type === "tool") {
+      const view = syncPermission(data, part)
+
+      if (part.state.status === "running") {
+        if (data.ids.has(part.id)) {
+          return out(data, commits, view)
+        }
+
+        if (!data.tools.has(part.id)) {
+          data.tools.add(part.id)
+          commits.push(startTool(part))
+        }
+
+        return out(data, commits, view ?? patch({ status: toolStatus(part) }))
       }
 
-      if (!data.tools.has(part.id)) {
-        data.tools.add(part.id)
-        commits.push(startTool(part))
+      if (part.state.status === "completed") {
+        const seen = data.tools.has(part.id)
+        data.tools.delete(part.id)
+        if (data.ids.has(part.id)) {
+          return out(data, commits, view)
+        }
+
+        if (!seen) {
+          commits.push(startTool(part))
+        }
+
+        data.ids.add(part.id)
+        stashEcho(data, part)
+
+        const output = part.state.output
+        if (typeof output === "string" && output.trim()) {
+          commits.push({
+            kind: "tool",
+            text: output,
+            phase: "progress",
+            source: "tool",
+            messageID: part.messageID,
+            partID: part.id,
+            tool: part.tool,
+            part,
+          })
+        }
+
+        commits.push(doneTool(part))
+        return out(data, commits, view)
       }
 
-      return out(data, commits, patch({ status: toolStatus(part) }))
-    }
+      if (part.state.status === "error") {
+        data.tools.delete(part.id)
+        if (data.ids.has(part.id)) {
+          return out(data, commits, view)
+        }
 
-    if (part.type === "tool" && part.state.status === "completed") {
-      const seen = data.tools.has(part.id)
-      data.tools.delete(part.id)
-      if (data.ids.has(part.id)) {
-        return out(data, commits)
+        data.ids.add(part.id)
+        const text =
+          typeof part.state.error === "string" && part.state.error.trim() ? part.state.error : "unknown error"
+        commits.push(failTool(part, text))
+        return out(data, commits, view)
       }
-
-      if (!seen) {
-        commits.push(startTool(part))
-      }
-
-      data.ids.add(part.id)
-      stashEcho(data, part)
-
-      const output = part.state.output
-      if (typeof output === "string" && output.trim()) {
-        commits.push({
-          kind: "tool",
-          text: output,
-          phase: "progress",
-          source: "tool",
-          messageID: part.messageID,
-          partID: part.id,
-          tool: part.tool,
-          part,
-        })
-      }
-
-      commits.push(doneTool(part))
-      return out(data, commits)
-    }
-
-    if (part.type === "tool" && part.state.status === "error") {
-      data.tools.delete(part.id)
-      if (data.ids.has(part.id)) {
-        return out(data, commits)
-      }
-
-      data.ids.add(part.id)
-      const text = typeof part.state.error === "string" && part.state.error.trim() ? part.state.error : "unknown error"
-      commits.push(failTool(part, text))
-      return out(data, commits)
     }
 
     if (part.type !== "text" && part.type !== "reasoning") {
@@ -682,7 +750,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
       return out(data, commits)
     }
 
-    upsert(data.permissions, event.properties)
+    upsert(data.permissions, enrichPermission(data, event.properties))
     return out(data, commits, queueFooter(data))
   }
 

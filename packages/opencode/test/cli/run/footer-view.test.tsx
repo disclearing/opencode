@@ -1,9 +1,10 @@
 /** @jsxImportSource @opentui/solid */
 import { afterEach, describe, expect, test } from "bun:test"
+import type { PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2"
 import { testRender } from "@opentui/solid"
 import { createSignal } from "solid-js"
 import { RunFooterView, hintFlags } from "../../../src/cli/cmd/run/footer.view"
-import type { FooterState, FooterView } from "../../../src/cli/cmd/run/types"
+import type { FooterState, FooterView, PermissionReply } from "../../../src/cli/cmd/run/types"
 
 function get(node: any, id: string): any {
   if (node.id === id) {
@@ -31,6 +32,34 @@ function composer(setup: Awaited<ReturnType<typeof testRender>>) {
   return node as {
     plainText: string
     cursorOffset: number
+  }
+}
+
+function permission(input: Partial<PermissionRequest> = {}): PermissionRequest {
+  return {
+    id: "perm-1",
+    sessionID: "session-1",
+    permission: "read",
+    patterns: ["/tmp/file.txt"],
+    metadata: {},
+    always: [],
+    ...input,
+  }
+}
+
+function question(input: Partial<QuestionRequest> = {}): QuestionRequest {
+  return {
+    id: "question-1",
+    sessionID: "session-1",
+    questions: [
+      {
+        question: "Streaming mode",
+        header: "Mode",
+        options: [{ label: "chunked", description: "Incremental output" }],
+        multiple: false,
+      },
+    ],
+    ...input,
   }
 }
 
@@ -746,7 +775,7 @@ describe("run footer view", () => {
     await setup.renderOnce()
     expect(get(setup.renderer.root, "run-direct-footer-composer")).toBeUndefined()
     expect(setup.captureCharFrame()).toContain("Permission required")
-    expect(setup.captureCharFrame()).toContain("Permission: read")
+    expect(setup.captureCharFrame()).toContain("Read /tmp/file.txt")
 
     setView({ type: "prompt" })
     await setup.renderOnce()
@@ -913,5 +942,203 @@ describe("run footer view", () => {
     expect(cycles).toBe(0)
     expect(sent).toEqual([])
     expect(exits).toBe(1)
+  })
+
+  test("permission body submits allow once and stays visible until event removal", async () => {
+    const replies: PermissionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting permission",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "permission",
+      request: permission(),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onPermissionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([{ requestID: "perm-1", reply: "once" }])
+    expect(get(setup.renderer.root, "run-direct-footer-permission-body")).toBeDefined()
+  })
+
+  test("permission body requires always confirmation before replying", async () => {
+    const replies: PermissionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting permission",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "permission",
+      request: permission({ always: ["*"] }),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onPermissionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+
+    setup.mockInput.pressArrow("right")
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([])
+    expect(setup.captureCharFrame()).toContain("Always allow")
+
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([{ requestID: "perm-1", reply: "always" }])
+  })
+
+  test("permission reject stage captures feedback and submits reject reply", async () => {
+    const replies: PermissionReply[] = []
+    const [state] = createSignal<FooterState>({
+      phase: "running",
+      status: "awaiting permission",
+      queue: 0,
+      model: "model",
+      duration: "",
+      usage: "",
+      first: false,
+      interrupt: 0,
+      exit: 0,
+    })
+    const [view] = createSignal<FooterView>({
+      type: "permission",
+      request: permission(),
+    })
+
+    setup = await testRender(
+      () => (
+        <RunFooterView
+          state={state}
+          view={view}
+          keybinds={{
+            leader: "ctrl+x",
+            variantCycle: "ctrl+t,<leader>t",
+            interrupt: "escape",
+            historyPrevious: "up",
+            historyNext: "down",
+            inputSubmit: "return",
+            inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
+          }}
+          agent="Build"
+          onSubmit={() => true}
+          onPermissionReply={async (input) => {
+            replies.push(input)
+          }}
+          onCycle={() => {}}
+          onInterrupt={() => false}
+          onExit={() => {}}
+          onRows={() => {}}
+          onStatus={() => {}}
+        />
+      ),
+      {
+        width: 110,
+        height: 12,
+      },
+    )
+
+    await setup.renderOnce()
+
+    setup.mockInput.pressEscape()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    await setup.renderOnce()
+    expect(setup.captureCharFrame()).toContain("Reject permission")
+
+    await setup.mockInput.typeText("Please use ripgrep instead")
+    setup.mockInput.pressEnter()
+    await Promise.resolve()
+    await setup.renderOnce()
+
+    expect(replies).toEqual([
+      {
+        requestID: "perm-1",
+        reply: "reject",
+        message: "Please use ripgrep instead",
+      },
+    ])
   })
 })

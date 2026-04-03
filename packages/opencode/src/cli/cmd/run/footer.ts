@@ -91,10 +91,12 @@ export class RunFooter implements FooterApi {
           state: this.state,
           view: this.view,
           theme: options.theme.footer,
+          diffStyle: options.diffStyle,
           keybinds: options.keybinds,
           history: options.history,
           agent: options.agentLabel,
           onSubmit: this.handlePrompt,
+          onPermissionReply: this.handlePermissionReply,
           onCycle: this.handleCycle,
           onInterrupt: this.handleInterrupt,
           onExitRequest: this.handleExit,
@@ -333,6 +335,17 @@ export class RunFooter implements FooterApi {
     }
 
     return true
+  }
+
+  private handlePermissionReply = async (input: PermissionReply): Promise<void> => {
+    if (this.permissions.size === 0) {
+      this.patch({ status: "permission queue unavailable" })
+      throw new Error("permission queue unavailable")
+    }
+
+    for (const fn of [...this.permissions]) {
+      await fn(input)
+    }
   }
 
   private handleCycle = (): void => {

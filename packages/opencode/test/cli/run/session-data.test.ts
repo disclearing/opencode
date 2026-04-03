@@ -424,6 +424,119 @@ describe("session data reducer", () => {
     })
   })
 
+  test("enriches permission requests from matching tool input", () => {
+    let data = createSessionData()
+
+    data = reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-1",
+          messageID: "msg-1",
+          sessionID: "session-1",
+          type: "tool",
+          callID: "call-1",
+          tool: "bash",
+          state: {
+            status: "running",
+            input: {
+              command: "git status --short",
+              description: "Shell command",
+            },
+          },
+        },
+      },
+    }).data
+
+    const out = reduce(data, {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["src/**/*.ts"],
+        metadata: {},
+        always: [],
+        tool: {
+          messageID: "msg-1",
+          callID: "call-1",
+        },
+      },
+    })
+
+    expect(out.footer).toEqual({
+      patch: { status: "awaiting permission" },
+      view: {
+        type: "permission",
+        request: expect.objectContaining({
+          id: "perm-1",
+          metadata: expect.objectContaining({
+            input: {
+              command: "git status --short",
+              description: "Shell command",
+            },
+          }),
+        }),
+      },
+    })
+  })
+
+  test("refreshes active permission view when matching tool input arrives later", () => {
+    let data = createSessionData()
+
+    data = reduce(data, {
+      type: "permission.asked",
+      properties: {
+        id: "perm-1",
+        sessionID: "session-1",
+        permission: "bash",
+        patterns: ["src/**/*.ts"],
+        metadata: {},
+        always: [],
+        tool: {
+          messageID: "msg-1",
+          callID: "call-1",
+        },
+      },
+    }).data
+
+    const out = reduce(data, {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "tool-1",
+          messageID: "msg-1",
+          sessionID: "session-1",
+          type: "tool",
+          callID: "call-1",
+          tool: "bash",
+          state: {
+            status: "running",
+            input: {
+              command: "git status --short",
+              description: "Shell command",
+            },
+          },
+        },
+      },
+    })
+
+    expect(out.footer).toEqual({
+      view: {
+        type: "permission",
+        request: expect.objectContaining({
+          id: "perm-1",
+          metadata: expect.objectContaining({
+            input: {
+              command: "git status --short",
+              description: "Shell command",
+            },
+          }),
+        }),
+      },
+    })
+  })
+
   test("session errors stay in transcript", () => {
     const out = reduce(createSessionData(), {
       type: "session.error",

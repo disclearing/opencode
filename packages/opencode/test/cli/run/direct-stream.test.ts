@@ -387,6 +387,64 @@ describe("run stream", () => {
     ])
   })
 
+  test("enriches bash permission view from matching tool input", async () => {
+    const out = await turn(
+      client([
+        {
+          type: "permission.asked",
+          properties: {
+            id: "perm-1",
+            sessionID: "session-1",
+            permission: "bash",
+            patterns: ["src/**/*.ts"],
+            metadata: {},
+            always: [],
+            tool: {
+              messageID: "msg-1",
+              callID: "call-1",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "tool-1",
+              messageID: "msg-1",
+              sessionID: "session-1",
+              type: "tool",
+              callID: "call-1",
+              tool: "bash",
+              state: {
+                status: "running",
+                input: {
+                  command: "git status --short",
+                  description: "Shell command",
+                },
+              },
+            },
+          },
+        },
+        idle(),
+      ]),
+    )
+
+    expect(out.presented.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "permission",
+        request: expect.objectContaining({
+          id: "perm-1",
+          metadata: expect.objectContaining({
+            input: {
+              command: "git status --short",
+              description: "Shell command",
+            },
+          }),
+        }),
+      }),
+    )
+  })
+
   test("keeps status-only events out of transcript commits", async () => {
     const replies: unknown[] = []
 
