@@ -3,6 +3,7 @@ import stripAnsi from "strip-ansi"
 import { LANGUAGE_EXTENSIONS } from "../../../lsp/language"
 import { Filesystem } from "../../../util/filesystem"
 import { Locale } from "../../../util/locale"
+import { toolView } from "./tool-policy"
 import type { RunDiffStyle, StreamCommit } from "./types"
 
 export type ToolDict = Record<string, unknown>
@@ -256,21 +257,6 @@ function readStart(ctx: ToolCtx): string {
   return `→ Read ${file}${tail}`.trim()
 }
 
-function readFinal(ctx: ToolCtx): string {
-  const list = arr(ctx.meta.loaded).filter((v): v is string => typeof v === "string")
-  const head = done("read", span(ctx))
-  if (list.length === 0) {
-    return head
-  }
-
-  const rows = [head, ...list.slice(0, 5).map((item) => `↳ Loaded ${view(item)}`)]
-  if (list.length > 5) {
-    rows.push(`↳ ... and ${list.length - 5} more`)
-  }
-
-  return rows.join("\n")
-}
-
 function writeStart(ctx: ToolCtx): string {
   return `← Write ${view(text(ctx.data.filePath))}`.trim()
 }
@@ -434,15 +420,6 @@ function globStart(ctx: ToolCtx): string {
   return `${head} in ${view(dir)}`
 }
 
-function globFinal(ctx: ToolCtx): string {
-  const count = num(ctx.meta.count)
-  if (count === undefined) {
-    return done("glob", span(ctx))
-  }
-
-  return `${done("glob", span(ctx))} · ${Locale.number(count)} ${count === 1 ? "match" : "matches"}`
-}
-
 function grepStart(ctx: ToolCtx): string {
   const pattern = text(ctx.data.pattern)
   const head = pattern ? `✱ Grep "${pattern}"` : "✱ Grep"
@@ -452,15 +429,6 @@ function grepStart(ctx: ToolCtx): string {
   }
 
   return `${head} in ${view(dir)}`
-}
-
-function grepFinal(ctx: ToolCtx): string {
-  const count = num(ctx.meta.matches)
-  if (count === undefined) {
-    return done("grep", span(ctx))
-  }
-
-  return `${done("grep", span(ctx))} · ${Locale.number(count)} ${count === 1 ? "match" : "matches"}`
 }
 
 function listStart(ctx: ToolCtx): string {
@@ -490,15 +458,6 @@ function codesearchStart(ctx: ToolCtx): string {
   return `◇ Exa Code Search "${query}"`
 }
 
-function codesearchFinal(ctx: ToolCtx): string {
-  const count = num(ctx.meta.results)
-  if (count === undefined) {
-    return done("codesearch", span(ctx))
-  }
-
-  return `${done("codesearch", span(ctx))} · ${Locale.number(count)} results`
-}
-
 function websearchStart(ctx: ToolCtx): string {
   const query = text(ctx.data.query)
   if (!query) {
@@ -506,15 +465,6 @@ function websearchStart(ctx: ToolCtx): string {
   }
 
   return `◈ Exa Web Search "${query}"`
-}
-
-function websearchFinal(ctx: ToolCtx): string {
-  const count = num(ctx.meta.numResults)
-  if (count === undefined) {
-    return done("websearch", span(ctx))
-  }
-
-  return `${done("websearch", span(ctx))} · ${Locale.number(count)} results`
 }
 
 const map: Record<string, Spec> = {
@@ -525,7 +475,6 @@ const map: Record<string, Spec> = {
   },
   read: {
     start: readStart,
-    final: readFinal,
   },
   write: {
     start: writeStart,
@@ -554,11 +503,9 @@ const map: Record<string, Spec> = {
   },
   glob: {
     start: globStart,
-    final: globFinal,
   },
   grep: {
     start: grepStart,
-    final: grepFinal,
   },
   list: {
     start: listStart,
@@ -568,11 +515,9 @@ const map: Record<string, Spec> = {
   },
   codesearch: {
     start: codesearchStart,
-    final: codesearchFinal,
   },
   websearch: {
     start: websearchStart,
-    final: websearchFinal,
   },
 }
 
@@ -589,10 +534,20 @@ export function toolCtx(commit: StreamCommit, raw: string): ToolCtx {
 
 export function formatToolEntry(commit: StreamCommit, raw: string): string {
   const ctx = toolCtx(commit, raw)
+  const view = toolView(ctx.name)
+
+  if (commit.phase === "progress" && !view.output) {
+    return ""
+  }
+
   if (commit.phase === "final") {
     const status = text(ctx.state.status)
     if (status === "error") {
       return fail(ctx)
+    }
+
+    if (!view.final) {
+      return ""
     }
 
     if (status && status !== "completed") {

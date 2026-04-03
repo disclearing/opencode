@@ -1,5 +1,6 @@
 import type { Event, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../../util/locale"
+import { toolView } from "./tool-policy"
 import type { FooterOutput, FooterPatch, FooterView, StreamCommit } from "./types"
 
 const money = new Intl.NumberFormat("en-US", {
@@ -393,7 +394,7 @@ export function flushPart(data: SessionData, commits: SessionCommit[], partID: s
   if (sent === 0) {
     chunk = chunk.replace(/^\n+/, "")
     if (kind === "reasoning" && chunk) {
-      chunk = `Thinking: ${chunk.replace(/\[REDACTED\]/g, "")}`
+      chunk = `_Thinking:_ ${chunk.replace(/\[REDACTED\]/g, "")}`
     }
     if (kind === "assistant" && chunk) {
       chunk = stripEcho(data, msg, chunk)
@@ -646,6 +647,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
 
       if (part.state.status === "completed") {
         const seen = data.tools.has(part.id)
+        const mode = toolView(part.tool)
         data.tools.delete(part.id)
         if (data.ids.has(part.id)) {
           return out(data, commits, view)
@@ -659,7 +661,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         stashEcho(data, part)
 
         const output = part.state.output
-        if (typeof output === "string" && output.trim()) {
+        if (mode.output && typeof output === "string" && output.trim()) {
           commits.push({
             kind: "tool",
             text: output,
@@ -672,7 +674,10 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
           })
         }
 
-        commits.push(doneTool(part))
+        if (mode.final) {
+          commits.push(doneTool(part))
+        }
+
         return out(data, commits, view)
       }
 

@@ -7,6 +7,7 @@ import {
   buildStructuredSnapshot,
   buildTextSnapshot,
 } from "./scrollback.snapshot"
+import { toolView } from "./tool-policy"
 import { RUN_THEME_FALLBACK, type RunEntryTheme } from "./theme"
 import type { ScrollbackOptions, StreamCommit } from "./types"
 
@@ -72,19 +73,18 @@ function normalizeBlock(text: string): string {
 }
 
 function build(commit: StreamCommit, ctx: ScrollbackRenderContext, theme: RunEntryTheme, opts: ScrollbackOptions) {
-  if (commit.kind === "tool" && commit.part?.state.status === "completed") {
-    if (commit.phase === "final" && commit.tool === "write") {
+  if (commit.kind === "tool" && commit.phase === "final" && commit.part?.state.status === "completed") {
+    const view = toolView(commit.tool)
+
+    if (view.snap === "code") {
       return buildCodeSnapshot(commit, ctx, theme)
     }
 
-    if (commit.phase === "final" && (commit.tool === "edit" || commit.tool === "apply_patch")) {
+    if (view.snap === "diff") {
       return buildDiffSnapshot(commit, ctx, theme, opts)
     }
 
-    if (
-      commit.phase === "final" &&
-      (commit.tool === "task" || commit.tool === "todowrite" || commit.tool === "question")
-    ) {
+    if (view.snap === "structured") {
       return buildStructuredSnapshot(commit, ctx, theme)
     }
   }

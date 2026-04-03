@@ -319,14 +319,6 @@ describe("run stream", () => {
         partID: "tool-1",
         tool: "bash",
       }),
-      expect.objectContaining({
-        kind: "tool",
-        text: "[tool:bash:end]",
-        phase: "final",
-        source: "tool",
-        partID: "tool-1",
-        tool: "bash",
-      }),
     ])
   })
 
@@ -542,14 +534,6 @@ describe("run stream", () => {
         phase: "start",
         source: "tool",
         text: "[tool:task] running investigate",
-        tool: "task",
-      }),
-      expect.objectContaining({
-        kind: "tool",
-        partID: "tool-1",
-        phase: "progress",
-        source: "tool",
-        text: "ok",
         tool: "task",
       }),
       expect.objectContaining({

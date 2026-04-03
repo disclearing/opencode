@@ -313,7 +313,6 @@ export const RunCommand = cmd({
       .option("thinking", {
         type: "boolean",
         describe: "show thinking blocks",
-        default: false,
       })
       .option("interactive", {
         alias: ["i"],
@@ -324,6 +323,7 @@ export const RunCommand = cmd({
   },
   handler: async (args) => {
     const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
+    const thinking = args.interactive ? (args.thinking ?? true) : (args.thinking ?? false)
 
     let message = [...args.message, ...(args["--"] || [])]
       .map((arg) => (arg.includes(" ") ? `"${arg.replace(/"/g, '\\"')}"` : arg))
@@ -786,7 +786,7 @@ export const RunCommand = cmd({
         variant: args.variant,
         files,
         initialInput: rawMessage.trim().length > 0 ? rawMessage : undefined,
-        thinking: args.thinking,
+        thinking,
       })
       return
     }
@@ -808,7 +808,7 @@ export const RunCommand = cmd({
         variant: args.variant,
         files,
         initialInput: rawMessage.trim().length > 0 ? rawMessage : undefined,
-        thinking: args.thinking,
+        thinking,
       })
     }
 

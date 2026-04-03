@@ -163,7 +163,7 @@ function flags(commit: StreamCommit) {
 }
 
 function snap(
-  root: BoxRenderable | TextRenderable,
+  root: BoxRenderable | TextRenderable | CodeRenderable,
   commit: StreamCommit,
   ctx: ScrollbackRenderContext,
 ): ScrollbackSnapshot {
@@ -287,6 +287,41 @@ function textSnap(
   }
 }
 
+function reasoningSnap(body: string, commit: StreamCommit, ctx: ScrollbackRenderContext, theme: RunEntryTheme) {
+  const width = Math.max(1, ctx.width)
+  const root = new CodeRenderable(ctx.renderContext, {
+    id: next("reasoning"),
+    position: "absolute",
+    left: 0,
+    top: 0,
+    width,
+    height: 1,
+    content: body,
+    filetype: "markdown",
+    syntaxStyle: codeStyle(),
+    conceal: false,
+    drawUnstyledText: false,
+    streaming: true,
+    wrapMode: "word",
+    fg: theme.reasoning.body,
+  })
+  const height = Math.max(1, root.scrollHeight)
+  root.height = height
+  const node = root as unknown as MeasureNode
+  const box = node.textBufferView?.measureForDimensions(width, height)
+  const cols = commit.gap ? 0 : Math.max(1, Math.min(width, box?.widthColsMax ?? 0))
+  const flag = flags(commit)
+
+  return {
+    root,
+    width: commit.gap ? 0 : cols,
+    height,
+    rowColumns: cols,
+    startOnNewLine: flag.startOnNewLine,
+    trailingNewline: flag.trailingNewline,
+  }
+}
+
 function fallback(commit: StreamCommit, ctx: ScrollbackRenderContext, theme: RunEntryTheme) {
   return textSnap(formatToolEntry(commit, clean(commit.text)), commit, ctx, theme)
 }
@@ -327,6 +362,10 @@ export function buildTextSnapshot(
   ctx: ScrollbackRenderContext,
   theme: RunEntryTheme,
 ) {
+  if (commit.kind === "reasoning" && commit.phase === "progress" && !commit.gap) {
+    return reasoningSnap(body, commit, ctx, theme)
+  }
+
   return textSnap(body, commit, ctx, theme)
 }
 

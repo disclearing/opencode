@@ -168,6 +168,41 @@ describe("session data reducer", () => {
     expect(out.data.ids.has("reason-1")).toBe(true)
   })
 
+  test("prefixes first reasoning chunk with tui-style label", () => {
+    let data = createSessionData()
+
+    data = reduce(data, assistant("msg-1")).data
+
+    const out = reduce(
+      data,
+      {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            id: "reason-1",
+            messageID: "msg-1",
+            sessionID: "session-1",
+            type: "reasoning",
+            text: "plan",
+            time: { end: Date.now() },
+          },
+        },
+      },
+      true,
+    )
+
+    expect(out.commits).toEqual([
+      {
+        kind: "reasoning",
+        text: "_Thinking:_ plan",
+        phase: "progress",
+        source: "reasoning",
+        messageID: "msg-1",
+        partID: "reason-1",
+      },
+    ])
+  })
+
   test("emits tool lifecycle in stable order", () => {
     let data = createSessionData()
 
@@ -231,21 +266,50 @@ describe("session data reducer", () => {
     expect(done.commits).toEqual([
       expect.objectContaining({
         kind: "tool",
-        text: "ok",
-        phase: "progress",
-        source: "tool",
-        messageID: "msg-1",
-        partID: "tool-1",
-        tool: "task",
-      }),
-      expect.objectContaining({
-        kind: "tool",
         text: "[tool:task:end]",
         phase: "final",
         source: "tool",
         messageID: "msg-1",
         partID: "tool-1",
         tool: "task",
+      }),
+    ])
+  })
+
+  test("keeps inline-only tools to a single start row", () => {
+    const out = reduce(createSessionData(), {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          id: "read-1",
+          messageID: "msg-1",
+          sessionID: "session-1",
+          type: "tool",
+          tool: "read",
+          state: {
+            status: "completed",
+            input: {
+              filePath: "src/index.ts",
+            },
+            output: "<path>src/index.ts</path>",
+            metadata: {
+              loaded: ["src/index.ts"],
+            },
+            time: { start: 1, end: 2 },
+          },
+        },
+      },
+    })
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        text: "[tool:read] running read",
+        phase: "start",
+        source: "tool",
+        messageID: "msg-1",
+        partID: "read-1",
+        tool: "read",
       }),
     ])
   })

@@ -3,17 +3,28 @@ import { testRender } from "@opentui/solid"
 import { RunFooter } from "../../../src/cli/cmd/run/footer"
 import { RUN_THEME_FALLBACK } from "../../../src/cli/cmd/run/theme"
 
+function walk(root: any): any[] {
+  const list = [root]
+  const children = typeof root?.getChildren === "function" ? root.getChildren() : []
+  for (const child of children) {
+    list.push(...walk(child))
+  }
+  return list
+}
+
 function snap(setup: Awaited<ReturnType<typeof testRender>>, writer: unknown) {
   const snap = (writer as any)({
     width: 100,
     widthMethod: setup.renderer.widthMethod,
     renderContext: (setup.renderer.root as any)._ctx,
   })
+  const root = snap.root as any
 
   return {
-    text: (snap.root as any).plainText as string,
+    text: root.plainText as string,
     startOnNewLine: snap.startOnNewLine as boolean,
     trailingNewline: snap.trailingNewline as boolean,
+    nodes: walk(root),
   }
 }
 
@@ -220,17 +231,68 @@ describe("run footer", () => {
       ctx.footer.append({ kind: "assistant", text: "\nfirst", phase: "progress", source: "assistant", partID: "a" })
       ;(ctx.footer as any).flush()
       expect(writes.length).toBe(3)
-      expect(snap(ctx.setup, writes[1])).toEqual({
-        text: "",
-        startOnNewLine: false,
-        trailingNewline: true,
-      })
+      expect(snap(ctx.setup, writes[1])).toEqual(
+        expect.objectContaining({
+          text: "",
+          startOnNewLine: false,
+          trailingNewline: true,
+        }),
+      )
       expect(snap(ctx.setup, writes[2]).text).toBe("\nfirst")
 
       ctx.footer.append({ kind: "assistant", text: "\nsecond", phase: "progress", source: "assistant", partID: "a" })
       ;(ctx.footer as any).flush()
       expect(writes.length).toBe(4)
       expect(snap(ctx.setup, writes[3]).text).toBe("\nsecond")
+    } finally {
+      ctx.destroy()
+    }
+  })
+
+  test("writes apply_patch final commits as diff snapshots", async () => {
+    const ctx = await create()
+
+    const writes: unknown[] = []
+    const write = ctx.setup.renderer.writeToScrollback.bind(ctx.setup.renderer)
+    ;(ctx.setup.renderer as any).writeToScrollback = (entry: unknown) => {
+      writes.push(entry)
+      return write(entry as any)
+    }
+
+    try {
+      ctx.footer.append({
+        kind: "tool",
+        text: "[tool:apply_patch:end]",
+        phase: "final",
+        source: "tool",
+        tool: "apply_patch",
+        part: {
+          id: "tool-1",
+          callID: "call-1",
+          sessionID: "session-1",
+          messageID: "message-1",
+          type: "tool",
+          tool: "apply_patch",
+          state: {
+            status: "completed",
+            input: {},
+            metadata: {
+              files: [
+                {
+                  type: "update",
+                  relativePath: "src/test.ts",
+                  filePath: "src/test.ts",
+                  diff: "@@ -1 +1 @@\n-old\n+new\n",
+                },
+              ],
+            },
+          },
+        } as any,
+      })
+      ;(ctx.footer as any).flush()
+
+      expect(writes).toHaveLength(1)
+      expect(snap(ctx.setup, writes[0]).nodes.some((node) => node.constructor.name === "DiffRenderable")).toBe(true)
     } finally {
       ctx.destroy()
     }

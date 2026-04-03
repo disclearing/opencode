@@ -188,11 +188,12 @@ describe("run scrollback", () => {
   })
 
   test("formats reasoning text with redaction cleanup", async () => {
-    const out = await draw(make("reasoning", " [REDACTED]step\nnext "))
-    expect(out.text).toBe(" step\nnext ")
+    const out = await draw(make("reasoning", "_Thinking:_ [REDACTED]step\nnext "))
+    expect(out.root.constructor.name).toBe("CodeRenderable")
+    expect((out.root as any).content).toBe("_Thinking:_ step\nnext ")
 
-    const prefixed = await draw(make("reasoning", "Thinking: keep\ngoing"))
-    expect(prefixed.text).toBe("Thinking: keep\ngoing")
+    const prefixed = await draw(make("reasoning", "_Thinking:_ keep\ngoing"))
+    expect((prefixed.root as any).content).toBe("_Thinking:_ keep\ngoing")
   })
 
   test("formats tool starts using adopted tui text", () => {
@@ -262,7 +263,26 @@ describe("run scrollback", () => {
     expect(text).toBe("Script session info for 'session':\nRecorded: 11.1s, 20K")
   })
 
-  test("formats richer read and patch completion summaries", () => {
+  test("suppresses final rows for inline-only tools", () => {
+    const bash = normalizeEntry(
+      makeTool(
+        "[tool:bash:end]",
+        "final",
+        "bash",
+        {
+          command: "whoami",
+        },
+        {
+          status: "completed",
+          metadata: {
+            exitCode: 0,
+          },
+          time: { start: 0, end: 49 },
+        },
+      ),
+    )
+    expect(bash).toBe("")
+
     const read = normalizeEntry(
       makeTool(
         "[tool:read:end]",
@@ -280,9 +300,30 @@ describe("run scrollback", () => {
         },
       ),
     )
-    expect(read).toContain("└ read completed")
-    expect(read).toContain("↳ Loaded packages/opencode/src/index.ts")
+    expect(read).toBe("")
 
+    const glob = normalizeEntry(
+      makeTool(
+        "[tool:glob:end]",
+        "final",
+        "glob",
+        {
+          pattern: "src/**/*.ts",
+          path: "packages/opencode",
+        },
+        {
+          status: "completed",
+          metadata: {
+            count: 1,
+          },
+          time: { start: 0, end: 9 },
+        },
+      ),
+    )
+    expect(glob).toBe("")
+  })
+
+  test("formats patch fallback completion summary", () => {
     const patch = normalizeEntry(
       makeTool(
         "[tool:apply_patch:end]",
@@ -407,8 +448,9 @@ describe("run scrollback", () => {
     expect(same(assistant.fg, RUN_THEME_FALLBACK.entry.assistant.body)).toBe(true)
     expect(Boolean(assistant.attrs & TextAttributes.BOLD)).toBe(false)
 
+    expect(reasoning.root.constructor.name).toBe("CodeRenderable")
     expect(same(reasoning.fg, RUN_THEME_FALLBACK.entry.reasoning.body)).toBe(true)
-    expect(Boolean(reasoning.attrs & TextAttributes.DIM)).toBe(true)
+    expect(Boolean(reasoning.attrs & TextAttributes.DIM)).toBe(false)
 
     expect(same(error.fg, RUN_THEME_FALLBACK.entry.error.body)).toBe(true)
     expect(Boolean(error.attrs & TextAttributes.BOLD)).toBe(true)
@@ -450,15 +492,17 @@ describe("run scrollback", () => {
 
     const final = await draw(
       makeTool(
-        "[tool:bash:end]",
+        "[tool:task:end]",
         "final",
-        "bash",
+        "task",
         {
-          command: "git status --short",
+          subagent_type: "general",
+          description: "investigate stream",
         },
         {
           status: "completed",
-          metadata: { exitCode: 0 },
+          title: "collecting logs",
+          metadata: { toolCalls: 1 },
         },
       ),
     )
