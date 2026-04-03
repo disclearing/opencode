@@ -3,10 +3,6 @@ import { Locale } from "../../../util/locale"
 import { trace } from "./trace"
 import type { FooterApi, FooterOutput, FooterPatch, FooterView, RunFilePart, RunInput, StreamCommit } from "./types"
 
-// ---------------------------------------------------------------------------
-// Tool policy
-// ---------------------------------------------------------------------------
-
 export type ToolView = {
   output: boolean
   final: boolean
@@ -60,10 +56,6 @@ export function toolView(name?: string): ToolView {
       }
   }
 }
-
-// ---------------------------------------------------------------------------
-// Session data
-// ---------------------------------------------------------------------------
 
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -870,10 +862,6 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
   return out(data, commits)
 }
 
-// ---------------------------------------------------------------------------
-// Stream — prompt turn
-// ---------------------------------------------------------------------------
-
 type TurnInput = {
   sdk: OpencodeClient
   sessionID: string
@@ -938,7 +926,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
   }
   const close = () => {
     // Pass undefined explicitly so TS accepts AsyncGenerator.return().
-    void events.stream.return(undefined).catch(() => {})
+    void events.stream.return(undefined).catch(() => { })
   }
   const offPermission = input.footer.onPermissionReply(async (payload) => {
     log?.write("send.permission.reply", payload)
@@ -1068,7 +1056,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       log?.write("turn.cancel", {
         sessionID: input.sessionID,
       })
-      void watch.catch(() => {})
+      void watch.catch(() => { })
       return
     }
 
@@ -1076,7 +1064,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       sessionID: input.sessionID,
       error: formatUnknownError(error),
     })
-    await watch.catch(() => {})
+    await watch.catch(() => { })
     throw error
   } finally {
     log?.write("turn.end", {

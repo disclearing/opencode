@@ -66,14 +66,19 @@ async function drawWidth(commit: StreamCommit, width: number, opts: ScrollbackOp
     })
     const root = snap.root as any
     const nodes = walk(root)
+    const textNodes = nodes.filter((node) => typeof node?.plainText === "string")
+    const body = textNodes[0] ?? root
     return {
       snap,
       root,
       nodes,
-      textNodes: nodes.filter((node) => typeof node?.plainText === "string"),
-      text: root.plainText as string,
-      fg: root.fg,
-      attrs: root.attributes ?? 0,
+      textNodes,
+      text:
+        typeof root?.plainText === "string"
+          ? (root.plainText as string)
+          : textNodes.map((node) => node.plainText as string).join("\n"),
+      fg: body.fg,
+      attrs: body.attributes ?? 0,
     }
   } finally {
     setup.renderer.destroy()
@@ -96,12 +101,18 @@ async function drawBlock(text: string) {
       renderContext: (setup.renderer.root as any)._ctx,
     })
     const root = snap.root as any
+    const nodes = walk(root)
+    const textNodes = nodes.filter((node) => typeof node?.plainText === "string")
+    const body = textNodes[0] ?? root
     return {
       snap,
       root,
-      text: root.plainText as string,
-      fg: root.fg,
-      attrs: root.attributes ?? 0,
+      text:
+        typeof root?.plainText === "string"
+          ? (root.plainText as string)
+          : textNodes.map((node) => node.plainText as string).join("\n"),
+      fg: body.fg,
+      attrs: body.attributes ?? 0,
     }
   } finally {
     setup.renderer.destroy()
@@ -129,7 +140,8 @@ describe("run scrollback", () => {
   test("renders progress entries inline by default", async () => {
     const out = await draw(make("assistant", "assistant reply"))
 
-    expect(out.root.constructor.name).toBe("TextRenderable")
+    expect(out.root.constructor.name).toBe("BoxRenderable")
+    expect(out.textNodes[0]?.constructor.name).toBe("TextRenderable")
     expect(out.text).toBe("assistant reply")
     expect(out.text).not.toContain("ASSISTANT")
     expect(out.text).not.toMatch(/\b\d{2}:\d{2}:\d{2}\b/)
@@ -189,11 +201,13 @@ describe("run scrollback", () => {
 
   test("formats reasoning text with redaction cleanup", async () => {
     const out = await draw(make("reasoning", "_Thinking:_ [REDACTED]step\nnext "))
-    expect(out.root.constructor.name).toBe("CodeRenderable")
-    expect((out.root as any).content).toBe("_Thinking:_ step\nnext ")
+    const code = out.nodes.find((node) => node.constructor.name === "CodeRenderable") as any
+    expect(out.root.constructor.name).toBe("BoxRenderable")
+    expect(code?.content).toBe("_Thinking:_ step\nnext ")
 
     const prefixed = await draw(make("reasoning", "_Thinking:_ keep\ngoing"))
-    expect((prefixed.root as any).content).toBe("_Thinking:_ keep\ngoing")
+    const next = prefixed.nodes.find((node) => node.constructor.name === "CodeRenderable") as any
+    expect(next?.content).toBe("_Thinking:_ keep\ngoing")
   })
 
   test("formats tool starts using adopted tui text", () => {
@@ -448,7 +462,8 @@ describe("run scrollback", () => {
     expect(same(assistant.fg, RUN_THEME_FALLBACK.entry.assistant.body)).toBe(true)
     expect(Boolean(assistant.attrs & TextAttributes.BOLD)).toBe(false)
 
-    expect(reasoning.root.constructor.name).toBe("CodeRenderable")
+    expect(reasoning.root.constructor.name).toBe("BoxRenderable")
+    expect(reasoning.nodes.some((node) => node.constructor.name === "CodeRenderable")).toBe(true)
     expect(same(reasoning.fg, RUN_THEME_FALLBACK.entry.reasoning.body)).toBe(true)
     expect(Boolean(reasoning.attrs & TextAttributes.DIM)).toBe(false)
 
