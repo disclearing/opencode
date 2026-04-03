@@ -186,7 +186,7 @@ describe("run scrollback", () => {
         workdir: "packages/opencode",
       }),
     )
-    expect(bash).toContain("[tool:bash] Run typecheck in packages/opencode")
+    expect(bash).toContain("# Run typecheck in packages/opencode")
     expect(bash).toContain("$ bun typecheck")
 
     const task = normalizeEntry(
@@ -195,14 +195,29 @@ describe("run scrollback", () => {
         description: "investigate stream",
       }),
     )
-    expect(task).toBe("[tool:task] General Task - investigate stream")
+    expect(task).toBe("│ General Task — investigate stream")
 
     const question = normalizeEntry(
       makeTool("[tool:question] running", "start", "question", {
         questions: [{ question: "Pick one", options: [{ label: "A", description: "a" }] }],
       }),
     )
-    expect(question).toBe("[tool:question] Asked 1 question")
+    expect(question).toBe("→ Asked 1 question")
+
+    const glob = normalizeEntry(
+      makeTool("[tool:glob] running", "start", "glob", {
+        pattern: "src/**/*.ts",
+        path: "packages/opencode",
+      }),
+    )
+    expect(glob).toBe('✱ Glob "src/**/*.ts" in packages/opencode')
+
+    const skill = normalizeEntry(
+      makeTool("[tool:skill] running", "start", "skill", {
+        name: "opentui",
+      }),
+    )
+    expect(skill).toBe('→ Skill "opentui"')
   })
 
   test("strips ansi from bash progress output", () => {
@@ -354,6 +369,20 @@ describe("run scrollback", () => {
     const reasoning = await draw(make("reasoning", "r"))
     const error = await draw(make("error", "e", "start"))
     const final = await draw(make("system", "[tool:end]", "final"))
+    const terr = await draw(
+      makeTool(
+        "[tool:bash:error] boom",
+        "final",
+        "bash",
+        {
+          command: "ls",
+        },
+        {
+          status: "error",
+          error: "boom",
+        },
+      ),
+    )
 
     expect(same(user.fg, RUN_THEME_FALLBACK.entry.user.body)).toBe(true)
     expect(Boolean(user.attrs & TextAttributes.BOLD)).toBe(true)
@@ -369,6 +398,10 @@ describe("run scrollback", () => {
 
     expect(same(final.fg, RUN_THEME_FALLBACK.entry.system.body)).toBe(true)
     expect(Boolean(final.attrs & TextAttributes.DIM)).toBe(true)
+
+    expect(terr.text).toBe("✖ bash failed: boom")
+    expect(same(terr.fg, RUN_THEME_FALLBACK.entry.error.body)).toBe(true)
+    expect(Boolean(terr.attrs & TextAttributes.BOLD)).toBe(true)
   })
 
   test("preserves multiline blocks with intentional spacing", async () => {
