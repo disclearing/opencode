@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@opencode-ai/sdk/v2"
-import { createSessionData, reduceSessionData } from "../../../src/cli/cmd/run/session-data"
+import { createSessionData, reduceSessionData } from "../../../src/cli/cmd/run/stream"
 
 function reduce(data: ReturnType<typeof createSessionData>, event: unknown, thinking = false) {
   return reduceSessionData({
