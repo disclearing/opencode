@@ -5,7 +5,17 @@ import { Keybind } from "../../../util/keybind"
 import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
 import { entryWriter, normalizeEntry } from "./scrollback"
 import type { RunTheme } from "./theme"
-import type { FooterApi, FooterKeybinds, FooterPatch, FooterState, StreamCommit } from "./types"
+import type {
+  FooterApi,
+  FooterKeybinds,
+  FooterPatch,
+  FooterState,
+  FooterView,
+  PermissionReply,
+  QuestionReject,
+  QuestionReply,
+  StreamCommit,
+} from "./types"
 
 type CycleResult = {
   modelLabel?: string
@@ -29,6 +39,9 @@ export class RunFooter implements FooterApi {
   private destroyed = false
   private prompts = new Set<(text: string) => void>()
   private closes = new Set<() => void>()
+  private permissions = new Set<(input: PermissionReply) => void | Promise<void>>()
+  private questions = new Set<(input: QuestionReply) => void | Promise<void>>()
+  private rejects = new Set<(input: QuestionReject) => void | Promise<void>>()
   private seen = new Set<string>()
   private queue: StreamCommit[] = []
   private pending = false
@@ -36,6 +49,8 @@ export class RunFooter implements FooterApi {
   private rows = TEXTAREA_MIN_ROWS
   private state: Accessor<FooterState>
   private setState: Setter<FooterState>
+  private view: Accessor<FooterView>
+  private setView: Setter<FooterView>
   private interruptTimeout: NodeJS.Timeout | undefined
   private exitTimeout: NodeJS.Timeout | undefined
   private interruptHint: string
@@ -57,6 +72,9 @@ export class RunFooter implements FooterApi {
     })
     this.state = state
     this.setState = setState
+    const [view, setView] = createSignal<FooterView>({ type: "prompt" })
+    this.view = view
+    this.setView = setView
     this.base = Math.max(1, renderer.footerHeight - TEXTAREA_MIN_ROWS)
     this.interruptHint = this.printableBinding(options.keybinds.interrupt, options.keybinds.leader) || "esc"
 
@@ -66,6 +84,7 @@ export class RunFooter implements FooterApi {
       () =>
         createComponent(RunFooterView, {
           state: this.state,
+          view: this.view,
           theme: options.theme.footer,
           keybinds: options.keybinds,
           history: options.history,
@@ -109,6 +128,27 @@ export class RunFooter implements FooterApi {
     }
   }
 
+  public onPermissionReply(fn: (input: PermissionReply) => void | Promise<void>): () => void {
+    this.permissions.add(fn)
+    return () => {
+      this.permissions.delete(fn)
+    }
+  }
+
+  public onQuestionReply(fn: (input: QuestionReply) => void | Promise<void>): () => void {
+    this.questions.add(fn)
+    return () => {
+      this.questions.delete(fn)
+    }
+  }
+
+  public onQuestionReject(fn: (input: QuestionReject) => void | Promise<void>): () => void {
+    this.rejects.add(fn)
+    return () => {
+      this.rejects.delete(fn)
+    }
+  }
+
   public patch(next: FooterPatch): void {
     if (this.destroyed || this.renderer.isDestroyed) {
       return
@@ -140,6 +180,14 @@ export class RunFooter implements FooterApi {
     if (prev.phase === "running" && state.phase === "idle") {
       this.flush()
     }
+  }
+
+  public present(view: FooterView): void {
+    if (this.destroyed || this.renderer.isDestroyed) {
+      return
+    }
+
+    this.setView(view)
   }
 
   public append(commit: StreamCommit): void {
@@ -211,6 +259,9 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
+    this.permissions.clear()
+    this.questions.clear()
+    this.rejects.clear()
     this.seen.clear()
   }
 
@@ -402,6 +453,9 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
+    this.permissions.clear()
+    this.questions.clear()
+    this.rejects.clear()
     this.seen.clear()
   }
 

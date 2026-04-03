@@ -1,4 +1,4 @@
-import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2"
+import type { OpencodeClient, PermissionRequest, QuestionRequest, ToolPart } from "@opencode-ai/sdk/v2"
 
 export type RunFilePart = {
   type: "file"
@@ -40,6 +40,22 @@ export type FooterState = {
 
 export type FooterPatch = Partial<FooterState>
 
+export type FooterView =
+  | { type: "prompt" }
+  | { type: "permission"; request: PermissionRequest }
+  | { type: "question"; request: QuestionRequest }
+
+export type FooterOutput = {
+  patch?: FooterPatch
+  view?: FooterView
+}
+
+export type PermissionReply = Parameters<OpencodeClient["permission"]["reply"]>[0]
+
+export type QuestionReply = Parameters<OpencodeClient["question"]["reply"]>[0]
+
+export type QuestionReject = Parameters<OpencodeClient["question"]["reject"]>[0]
+
 export type FooterKeybinds = {
   leader: string
   variantCycle: string
@@ -59,6 +75,7 @@ export type StreamCommit = {
   text: string
   phase: StreamPhase
   source: StreamSource
+  messageID?: string
   partID?: string
   tool?: string
   part?: ToolPart
@@ -68,8 +85,12 @@ export type StreamCommit = {
 export type FooterApi = {
   readonly isClosed: boolean
   onPrompt(fn: (text: string) => void): () => void
+  onPermissionReply(fn: (input: PermissionReply) => void | Promise<void>): () => void
+  onQuestionReply(fn: (input: QuestionReply) => void | Promise<void>): () => void
+  onQuestionReject(fn: (input: QuestionReject) => void | Promise<void>): () => void
   onClose(fn: () => void): () => void
   patch(next: FooterPatch): void
+  present(view: FooterView): void
   append(commit: StreamCommit): void
   idle(): Promise<void>
   close(): void

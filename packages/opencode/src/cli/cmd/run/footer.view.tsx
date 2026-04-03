@@ -5,7 +5,7 @@ import { Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import "opentui-spinner/solid"
 import { Keybind } from "../../../util/keybind"
 import { createColors, createFrames } from "../tui/ui/spinner"
-import type { FooterKeybinds, FooterState } from "./types"
+import type { FooterKeybinds, FooterState, FooterView } from "./types"
 import { RUN_THEME_FALLBACK, type RunFooterTheme } from "./theme"
 
 const LEADER_TIMEOUT_MS = 2000
@@ -66,6 +66,7 @@ type Key = {
 
 type RunFooterViewProps = {
   state: () => FooterState
+  view?: () => FooterView
   theme?: RunFooterTheme
   keybinds: FooterKeybinds
   history?: string[]

@@ -65,10 +65,14 @@ async function turn(sdk: OpencodeClient, opt: TurnOpt = {}) {
     footer: {
       isClosed: false,
       onPrompt: () => () => {},
+      onPermissionReply: () => () => {},
+      onQuestionReply: () => () => {},
+      onQuestionReject: () => () => {},
       onClose: () => () => {},
       patch(next) {
         patched.push(next)
       },
+      present() {},
       append(commit) {
         appended.push(commit)
       },

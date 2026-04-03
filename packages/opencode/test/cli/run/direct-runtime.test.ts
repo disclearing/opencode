@@ -30,6 +30,15 @@ function createFooter() {
         prompts.delete(fn)
       }
     },
+    onPermissionReply() {
+      return () => {}
+    },
+    onQuestionReply() {
+      return () => {}
+    },
+    onQuestionReject() {
+      return () => {}
+    },
     onClose(fn) {
       if (closed) {
         fn()
@@ -44,6 +53,7 @@ function createFooter() {
     patch(next) {
       patched.push(next)
     },
+    present() {},
     append(commit) {
       appended.push(commit)
     },
