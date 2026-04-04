@@ -17,7 +17,7 @@ document.
 ## Scope And Related Docs
 
 - Investigation: `/home/simon/src/opendocs/investigations/32-opentui-opencode-direct-render-mode.md`
-- Session-output spec: `/home/simon/src/wt/oc-run/packages/opencode/src/cli/cmd/DIRECT_SCROLLBACK_PLAN.md`
+- Session-output spec: `/home/simon/src/wt/oc-run/packages/opencode/src/cli/cmd/direct-scrollback-plan.md`
 - OpenTUI worktree: `/home/simon/src/wt/cli-render-api` (`flicker-less`)
 - Opencode worktree: `/home/simon/src/wt/oc-run` (`oc-run`)
 
@@ -180,7 +180,7 @@ At the product level, direct mode should:
 - use footer-owned permission/question UI,
 - stay architecture-compatible with the fullscreen session route.
 
-The exact v1 behavior is specified in `DIRECT_SCROLLBACK_PLAN.md`.
+The exact v1 behavior is specified in `direct-scrollback-plan.md`.
 
 ## Current Implementation Status
 
@@ -199,7 +199,7 @@ Not finished yet:
 
 - footer-owned permission UI,
 - footer-owned question UI,
-- full v1 renderer/test coverage from `DIRECT_SCROLLBACK_PLAN.md`.
+- full v1 renderer/test coverage from `direct-scrollback-plan.md`.
 
 Important current-state note:
 
@@ -269,20 +269,21 @@ At a high level, the direct-mode flow is:
    them.
 
 The detailed session-output contract for that flow now lives in
-`DIRECT_SCROLLBACK_PLAN.md`.
+`direct-scrollback-plan.md`.
 
 ## Relationship Between Context And Plan
 
 The two docs serve different purposes.
 
-`CONTEXT.md` should answer:
+`context.md` should answer:
 
 - what is this project,
 - why is it structured this way,
 - which parts of the repo matter,
 - what is current reality versus target v1.
 
-`DIRECT_SCROLLBACK_PLAN.md` should answer:
+`direct-scrollback-plan.md`.
+should answer:
 
 - what exact state and types to add,
 - how events map to commits and footer view changes,

@@ -137,14 +137,14 @@ fullscreen/direct components right now.
      Target: keep only the direct-specific shell and project the existing session
      model into two lanes: scrollback and footer.
 
-- [ ] 4. Remove the extra protocol translation layer if possible.
+- [x] 4. Remove the extra protocol translation layer if possible.
      Files: `packages/opencode/src/cli/cmd/run/types.ts`, `packages/opencode/src/cli/cmd/run/stream.ts`, `packages/opencode/src/cli/cmd/run/scrollback.tsx`
      Why: the current flow is
      `SDK event -> SessionData -> StreamCommit -> normalized string -> ScrollbackWriter`.
      Target: render from typed message, part, and tool state, or keep only a very
      small typed append-event model with no string parsing.
 
-- [ ] 5. Delete sentinel transcript strings.
+- [x] 5. Delete sentinel transcript strings.
      Files: `packages/opencode/src/cli/cmd/run/stream.ts`, `packages/opencode/src/cli/cmd/run/scrollback.tsx`
      Why: `[tool:...:end]`, `[tool:...:error]`, `[assistant:interrupted]`, and
      `[reasoning:interrupted]` are synthetic control messages that later get decoded
