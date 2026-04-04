@@ -69,17 +69,18 @@ export function RunFooterView(props: RunFooterViewProps) {
   const interruptKey = createMemo(() => interrupt() || "/exit")
   const theme = createMemo(() => props.theme ?? RUN_THEME_FALLBACK.footer)
   const spin = createMemo(() => {
-    const list = [theme().highlight, theme().text, theme().muted]
     return {
       frames: createFrames({
-        colors: list,
+        color: theme().highlight,
         style: "blocks",
+        inactiveFactor: 0.6,
+        minAlpha: 0.3,
       }),
       color: createColors({
-        colors: list,
-        defaultColor: theme().muted,
+        color: theme().highlight,
         style: "blocks",
-        enableFading: false,
+        inactiveFactor: 0.6,
+        minAlpha: 0.3,
       }),
     }
   })
