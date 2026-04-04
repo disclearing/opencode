@@ -205,7 +205,7 @@ fullscreen/direct components right now.
 
 ### Footer And Interaction UI
 
-- [ ] 8. Shrink `footer.view.tsx`.
+- [x] 8. Shrink `footer.view.tsx`.
      Files: `packages/opencode/src/cli/cmd/run/footer.view.tsx`
      Why: this file is about 1500 lines and currently owns prompt input, history,
      leader state, keybind dispatch, permission state, question state, focus, layout,
