@@ -180,7 +180,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     process.off("SIGINT", sigint)
 
     try {
-      const show = await next.showExit()
+      const show = renderer.isDestroyed ? false : await next.showExit()
       if (!renderer.isDestroyed && show) {
         queueSplash(
           renderer,
