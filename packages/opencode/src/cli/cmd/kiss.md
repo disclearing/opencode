@@ -273,7 +273,7 @@ For items that mention fullscreen parity, do it in two phases:
 
 ### Rendering And Shared Presentation
 
-- [ ] 14. Consolidate tool presentation policy into one place.
+- [x] 14. Consolidate tool presentation policy into one place.
       Files: `packages/opencode/src/cli/cmd/run.ts`, `packages/opencode/src/cli/cmd/run/scrollback.tsx`, `packages/opencode/src/cli/cmd/run/footer.permission.tsx`
       Why: tool labels, summaries, file formatting, and tool-specific output rules are
       defined multiple times.

@@ -1,8 +1,6 @@
-import os from "os"
-import path from "path"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-import { Locale } from "../../../util/locale"
 import type { PermissionReply } from "./types"
+import { toolPath, toolPermissionInfo } from "./tool"
 
 type Dict = Record<string, unknown>
 
@@ -42,23 +40,6 @@ function text(v: unknown): string {
   return typeof v === "string" ? v : ""
 }
 
-export function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const home = os.homedir()
-  const abs = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const rel = path.relative(cwd, abs)
-
-  if (!rel) return "."
-  if (!rel.startsWith("..")) return rel
-  if (home && (abs === home || abs.startsWith(home + path.sep))) {
-    return abs.replace(home, "~")
-  }
-
-  return abs
-}
-
 function data(request: PermissionRequest): Dict {
   const meta = dict(request.metadata)
   return {
@@ -94,110 +75,21 @@ export function permissionOptions(stage: PermissionStage): PermissionOption[] {
 }
 
 export function permissionInfo(request: PermissionRequest): PermissionInfo {
+  const pats = patterns(request)
   const input = data(request)
-
-  if (request.permission === "edit") {
-    const file = text(input.filepath) || patterns(request)[0] || ""
-    return {
-      icon: "→",
-      title: `Edit ${normalizePath(file)}`,
-      lines: [],
-      diff: text(input.diff),
-      file,
-    }
-  }
-
-  if (request.permission === "read") {
-    const file = text(input.filePath) || patterns(request)[0] || ""
-    return {
-      icon: "→",
-      title: `Read ${normalizePath(file)}`,
-      lines: file ? [`Path: ${normalizePath(file)}`] : [],
-    }
-  }
-
-  if (request.permission === "glob") {
-    const pattern = text(input.pattern) || patterns(request)[0] || ""
-    return {
-      icon: "✱",
-      title: `Glob "${pattern}"`,
-      lines: pattern ? [`Pattern: ${pattern}`] : [],
-    }
-  }
-
-  if (request.permission === "grep") {
-    const pattern = text(input.pattern) || patterns(request)[0] || ""
-    return {
-      icon: "✱",
-      title: `Grep "${pattern}"`,
-      lines: pattern ? [`Pattern: ${pattern}`] : [],
-    }
-  }
-
-  if (request.permission === "list") {
-    const dir = text(input.path) || patterns(request)[0] || ""
-    return {
-      icon: "→",
-      title: `List ${normalizePath(dir)}`,
-      lines: dir ? [`Path: ${normalizePath(dir)}`] : [],
-    }
-  }
-
-  if (request.permission === "bash") {
-    const title = text(input.description) || "Shell command"
-    const cmd = text(input.command)
-    return {
-      icon: "#",
-      title,
-      lines: cmd ? [`$ ${cmd}`] : patterns(request).map((item) => `- ${item}`),
-    }
-  }
-
-  if (request.permission === "task") {
-    const type = text(input.subagent_type) || "general"
-    const desc = text(input.description)
-    return {
-      icon: "#",
-      title: `${Locale.titlecase(type)} Task`,
-      lines: desc ? [`◉ ${desc}`] : [],
-    }
-  }
-
-  if (request.permission === "webfetch") {
-    const url = text(input.url)
-    return {
-      icon: "%",
-      title: `WebFetch ${url}`,
-      lines: url ? [`URL: ${url}`] : [],
-    }
-  }
-
-  if (request.permission === "websearch") {
-    const query = text(input.query)
-    return {
-      icon: "◈",
-      title: `Exa Web Search "${query}"`,
-      lines: query ? [`Query: ${query}`] : [],
-    }
-  }
-
-  if (request.permission === "codesearch") {
-    const query = text(input.query)
-    return {
-      icon: "◇",
-      title: `Exa Code Search "${query}"`,
-      lines: query ? [`Query: ${query}`] : [],
-    }
+  const info = toolPermissionInfo(request.permission, input, dict(request.metadata), pats)
+  if (info) {
+    return info
   }
 
   if (request.permission === "external_directory") {
     const meta = dict(request.metadata)
-    const raw = text(meta.parentDir) || text(meta.filepath) || patterns(request)[0] || ""
+    const raw = text(meta.parentDir) || text(meta.filepath) || pats[0] || ""
     const dir = raw.includes("*") ? raw.slice(0, raw.indexOf("*")).replace(/[\\/]+$/, "") : raw
     return {
       icon: "←",
-      title: `Access external directory ${normalizePath(dir)}`,
-      lines: patterns(request).map((item) => `- ${item}`),
+      title: `Access external directory ${toolPath(dir, { home: true })}`,
+      lines: pats.map((item) => `- ${item}`),
     }
   }
 

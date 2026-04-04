@@ -1,7 +1,5 @@
 /** @jsxImportSource @opentui/solid */
 
-import path from "path"
-import stripAnsi from "strip-ansi"
 import {
   SyntaxStyle,
   TextAttributes,
@@ -13,8 +11,7 @@ import {
 import { createScrollbackWriter, type JSX } from "@opentui/solid"
 import { For, Show } from "solid-js"
 import { Filesystem } from "../../../util/filesystem"
-import { Locale } from "../../../util/locale"
-import { toolDiffView, toolFiletype, toolView } from "./tool"
+import { toolDiffView, toolFiletype, toolFrame, toolScroll, toolSnapshot, toolView } from "./tool"
 import { RUN_THEME_FALLBACK, type RunEntryTheme } from "./theme"
 import type { ScrollbackOptions, StreamCommit } from "./types"
 
@@ -48,52 +45,6 @@ function num(v: unknown): number | undefined {
   return v
 }
 
-function done(name: string, time: string): string {
-  if (!time) {
-    return `└ ${name} completed`
-  }
-
-  return `└ ${name} completed · ${time}`
-}
-
-type ToolCtx = {
-  raw: string
-  name: string
-  data: ToolDict
-  meta: ToolDict
-  state: ToolDict
-  status: string
-  error: string
-}
-
-type Draw = (ctx: ToolCtx) => string
-type Stage = StreamCommit["phase"]
-type Spec = Partial<Record<Stage, Draw>>
-
-function view(input: string): string {
-  if (!input) {
-    return ""
-  }
-
-  const cwd = process.cwd()
-  const abs = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const rel = path.relative(cwd, abs)
-
-  if (!rel) {
-    return "."
-  }
-
-  if (!rel.startsWith("..")) {
-    return rel
-  }
-
-  return abs
-}
-
-function viewPath(input: string): string {
-  return view(input)
-}
-
 function toolDiagnostics(meta: ToolDict, file: string): string[] {
   const all = dict(meta.diagnostics)
   const key = Filesystem.normalizePath(file)
@@ -115,427 +66,8 @@ function toolDiagnostics(meta: ToolDict, file: string): string[] {
     })
 }
 
-function info(data: ToolDict, skip: string[] = []): string {
-  const list = Object.entries(data).filter(([key, val]) => {
-    if (skip.includes(key)) {
-      return false
-    }
-
-    return typeof val === "string" || typeof val === "number" || typeof val === "boolean"
-  })
-
-  if (list.length === 0) {
-    return ""
-  }
-
-  return `[${list.map(([key, val]) => `${key}=${val}`).join(", ")}]`
-}
-
-function span(ctx: ToolCtx): string {
-  const time = dict(ctx.state.time)
-  const start = num(time.start)
-  const end = num(time.end)
-  if (start === undefined || end === undefined || end <= start) {
-    return ""
-  }
-
-  return Locale.duration(end - start)
-}
-
-function fail(ctx: ToolCtx): string {
-  if (ctx.error) {
-    return `✖ ${ctx.name} failed: ${ctx.error}`
-  }
-
-  const state = text(ctx.state.error).trim()
-  if (state) {
-    return `✖ ${ctx.name} failed: ${state}`
-  }
-
-  const raw = ctx.raw.trim()
-  if (raw) {
-    return `✖ ${ctx.name} failed: ${raw}`
-  }
-
-  return `✖ ${ctx.name} failed`
-}
-
-function start(ctx: ToolCtx): string {
-  const extra = info(ctx.data)
-  if (!extra) {
-    return `⚙ ${ctx.name}`
-  }
-
-  return `⚙ ${ctx.name} ${extra}`
-}
-
-function progress(ctx: ToolCtx): string {
-  return ctx.raw
-}
-
-function final(ctx: ToolCtx): string {
-  const status = ctx.status
-  if (status === "error") {
-    return fail(ctx)
-  }
-
-  if (status && status !== "completed") {
-    return ctx.raw.trim()
-  }
-
-  return done(ctx.name, span(ctx))
-}
-
-function bashStart(ctx: ToolCtx): string {
-  const cmd = text(ctx.data.command)
-  const desc = text(ctx.data.description) || "Shell"
-  const wd = text(ctx.data.workdir)
-  const dir = wd && wd !== "." ? view(wd) : ""
-  const title = dir && !desc.includes(dir) ? `${desc} in ${dir}` : desc
-
-  if (!cmd) {
-    return `# ${title}`
-  }
-
-  return `# ${title}\n$ ${cmd}`
-}
-
-function bashProgress(ctx: ToolCtx): string {
-  const out = stripAnsi(ctx.raw)
-  const cmd = text(ctx.data.command).trim()
-  if (!cmd) {
-    return out
-  }
-
-  const wdRaw = text(ctx.data.workdir).trim()
-  const wd = wdRaw ? view(wdRaw) : ""
-  const lines = out.split("\n")
-  const first = (lines[0] || "").trim()
-  const second = (lines[1] || "").trim()
-
-  if (wd && (first === wd || first === wdRaw) && second === cmd) {
-    const body = lines.slice(2).join("\n")
-    if (body.length > 0) {
-      return body
-    }
-    return out
-  }
-
-  if (first === cmd || first === `$ ${cmd}`) {
-    const body = lines.slice(1).join("\n")
-    if (body.length > 0) {
-      return body
-    }
-    return out
-  }
-
-  if (wd && (first === `${wd} ${cmd}` || first === `${wdRaw} ${cmd}`)) {
-    const body = lines.slice(1).join("\n")
-    if (body.length > 0) {
-      return body
-    }
-    return out
-  }
-
-  return out
-}
-
-function bashFinal(ctx: ToolCtx): string {
-  const code = num(ctx.meta.exitCode) ?? num(ctx.meta.exit_code)
-  const time = span(ctx)
-  if (code === undefined) {
-    return done("bash", time)
-  }
-
-  return `└ bash completed (exit ${code})${time ? ` · ${time}` : ""}`
-}
-
-function readStart(ctx: ToolCtx): string {
-  const file = view(text(ctx.data.filePath))
-  const extra = info(ctx.data, ["filePath"])
-  const tail = extra ? ` ${extra}` : ""
-  return `→ Read ${file}${tail}`.trim()
-}
-
-function writeStart(ctx: ToolCtx): string {
-  return `← Write ${view(text(ctx.data.filePath))}`.trim()
-}
-
-function editStart(ctx: ToolCtx): string {
-  const flag = info({ replaceAll: ctx.data.replaceAll })
-  const tail = flag ? ` ${flag}` : ""
-  return `← Edit ${view(text(ctx.data.filePath))}${tail}`.trim()
-}
-
-function patchStart(ctx: ToolCtx): string {
-  const files = arr(ctx.meta.files)
-  if (files.length === 0) {
-    return "% Patch"
-  }
-
-  return `% Patch ${files.length} file${files.length === 1 ? "" : "s"}`
-}
-
-function patchLine(data: ToolDict): string {
-  const type = text(data.type)
-  const rel = text(data.relativePath)
-  const file = text(data.filePath)
-
-  if (type === "add") {
-    return `+ Created ${rel || view(file)}`
-  }
-
-  if (type === "delete") {
-    return `- Deleted ${rel || view(file)}`
-  }
-
-  if (type === "move") {
-    const from = view(file)
-    const to = rel || view(text(data.movePath))
-    return `→ Moved ${from} → ${to}`
-  }
-
-  return `~ Patched ${rel || view(file)}`
-}
-
-function patchFinal(ctx: ToolCtx): string {
-  const files = arr(ctx.meta.files).map(dict)
-  const head = done("patch", span(ctx))
-  if (files.length === 0) {
-    return head
-  }
-
-  const rows = [head, ...files.slice(0, 6).map(patchLine)]
-  if (files.length > 6) {
-    rows.push(`... and ${files.length - 6} more`)
-  }
-
-  return rows.join("\n")
-}
-
-function taskStart(ctx: ToolCtx): string {
-  const kind = Locale.titlecase(text(ctx.data.subagent_type) || "general")
-  const desc = text(ctx.data.description)
-  if (!desc) {
-    return `│ ${kind} Task`
-  }
-
-  return `│ ${kind} Task — ${desc}`
-}
-
-function taskFinal(ctx: ToolCtx): string {
-  const kind = Locale.titlecase(text(ctx.data.subagent_type) || "general")
-  const head = done(`${kind} task`, span(ctx))
-  const rows: string[] = [head]
-
-  const title = text(ctx.state.title)
-  if (title) {
-    rows.push(`↳ ${title}`)
-  }
-
-  const calls = num(ctx.meta.toolcalls) ?? num(ctx.meta.toolCalls) ?? num(ctx.meta.calls)
-  if (calls !== undefined) {
-    rows.push(`↳ ${Locale.number(calls)} toolcall${calls === 1 ? "" : "s"}`)
-  }
-
-  const sid = text(ctx.meta.sessionId) || text(ctx.meta.sessionID)
-  if (sid) {
-    rows.push(`↳ session ${sid}`)
-  }
-
-  return rows.join("\n")
-}
-
-function todoStart(ctx: ToolCtx): string {
-  const todos = arr(ctx.data.todos)
-  if (todos.length === 0) {
-    return "⚙ Updating todos..."
-  }
-
-  return `⚙ Updating ${todos.length} todo${todos.length === 1 ? "" : "s"}`
-}
-
-function todoFinal(ctx: ToolCtx): string {
-  const list = arr(ctx.data.todos).map(dict)
-  if (list.length === 0) {
-    return done("todos", span(ctx))
-  }
-
-  const doneN = list.filter((item) => text(item.status) === "completed").length
-  const runN = list.filter((item) => text(item.status) === "in_progress").length
-  const left = list.length - doneN - runN
-  const tail = [`${list.length} total`]
-  if (doneN > 0) {
-    tail.push(`${doneN} done`)
-  }
-  if (runN > 0) {
-    tail.push(`${runN} active`)
-  }
-  if (left > 0) {
-    tail.push(`${left} pending`)
-  }
-
-  return `${done("todos", span(ctx))} · ${tail.join(" · ")}`
-}
-
-function questionStart(ctx: ToolCtx): string {
-  const count = arr(ctx.data.questions).length
-  return `→ Asked ${count} question${count === 1 ? "" : "s"}`
-}
-
-function questionFinal(ctx: ToolCtx): string {
-  const q = arr(ctx.data.questions).map(dict)
-  const a = arr(ctx.meta.answers)
-  if (q.length === 0) {
-    return done("questions", span(ctx))
-  }
-
-  const rows = [done("questions", span(ctx))]
-  for (const [i, item] of q.slice(0, 4).entries()) {
-    const prompt = text(item.question)
-    const reply = arr(a[i]).filter((v): v is string => typeof v === "string")
-    rows.push(`? ${prompt || `Question ${i + 1}`}`)
-    rows.push(`  ${reply.length > 0 ? reply.join(", ") : "(no answer)"}`)
-  }
-
-  if (q.length > 4) {
-    rows.push(`... and ${q.length - 4} more`)
-  }
-
-  return rows.join("\n")
-}
-
-function skillStart(ctx: ToolCtx): string {
-  return `→ Skill "${text(ctx.data.name)}"`
-}
-
-function globStart(ctx: ToolCtx): string {
-  const pattern = text(ctx.data.pattern)
-  const head = pattern ? `✱ Glob "${pattern}"` : "✱ Glob"
-  const dir = text(ctx.data.path)
-  if (!dir) {
-    return head
-  }
-
-  return `${head} in ${view(dir)}`
-}
-
-function grepStart(ctx: ToolCtx): string {
-  const pattern = text(ctx.data.pattern)
-  const head = pattern ? `✱ Grep "${pattern}"` : "✱ Grep"
-  const dir = text(ctx.data.path)
-  if (!dir) {
-    return head
-  }
-
-  return `${head} in ${view(dir)}`
-}
-
-function listStart(ctx: ToolCtx): string {
-  const dir = text(ctx.data.path)
-  if (!dir) {
-    return "→ List"
-  }
-
-  return `→ List ${view(dir)}`
-}
-
-function webfetchStart(ctx: ToolCtx): string {
-  const url = text(ctx.data.url)
-  if (!url) {
-    return "% WebFetch"
-  }
-
-  return `% WebFetch ${url}`
-}
-
-function codesearchStart(ctx: ToolCtx): string {
-  const query = text(ctx.data.query)
-  if (!query) {
-    return "◇ Exa Code Search"
-  }
-
-  return `◇ Exa Code Search "${query}"`
-}
-
-function websearchStart(ctx: ToolCtx): string {
-  const query = text(ctx.data.query)
-  if (!query) {
-    return "◈ Exa Web Search"
-  }
-
-  return `◈ Exa Web Search "${query}"`
-}
-
-const toolMap: Record<string, Spec> = {
-  bash: {
-    start: bashStart,
-    progress: bashProgress,
-    final: bashFinal,
-  },
-  read: {
-    start: readStart,
-  },
-  write: {
-    start: writeStart,
-  },
-  edit: {
-    start: editStart,
-  },
-  apply_patch: {
-    start: patchStart,
-    final: patchFinal,
-  },
-  task: {
-    start: taskStart,
-    final: taskFinal,
-  },
-  todowrite: {
-    start: todoStart,
-    final: todoFinal,
-  },
-  question: {
-    start: questionStart,
-    final: questionFinal,
-  },
-  skill: {
-    start: skillStart,
-  },
-  glob: {
-    start: globStart,
-  },
-  grep: {
-    start: grepStart,
-  },
-  list: {
-    start: listStart,
-  },
-  webfetch: {
-    start: webfetchStart,
-  },
-  codesearch: {
-    start: codesearchStart,
-  },
-  websearch: {
-    start: websearchStart,
-  },
-}
-
-function toolCtx(commit: StreamCommit, raw: string): ToolCtx {
-  const state = dict(commit.part?.state)
-  return {
-    raw,
-    name: commit.tool || commit.part?.tool || "tool",
-    data: dict(state.input),
-    meta: dict(state.metadata),
-    state,
-    status: commit.toolState ?? text(state.status),
-    error: (commit.toolError ?? "").trim(),
-  }
-}
-
 function formatToolEntry(commit: StreamCommit, raw: string): string {
-  const ctx = toolCtx(commit, raw)
+  const ctx = toolFrame(commit, raw)
   const view = toolView(ctx.name)
 
   if (commit.phase === "progress" && !view.output) {
@@ -545,7 +77,7 @@ function formatToolEntry(commit: StreamCommit, raw: string): string {
   if (commit.phase === "final") {
     const status = ctx.status
     if (status === "error") {
-      return fail(ctx)
+      return toolScroll("final", ctx)
     }
 
     if (!view.final) {
@@ -557,21 +89,7 @@ function formatToolEntry(commit: StreamCommit, raw: string): string {
     }
   }
 
-  const spec = toolMap[ctx.name] ?? {}
-  const draw = spec[commit.phase]
-  if (draw) {
-    return draw(ctx)
-  }
-
-  if (commit.phase === "start") {
-    return start(ctx)
-  }
-
-  if (commit.phase === "progress") {
-    return progress(ctx)
-  }
-
-  return final(ctx)
+  return toolScroll(commit.phase, ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -986,33 +504,6 @@ function questionWriter(data: QuestionInput, theme: RunEntryTheme, flags: Flags)
 // Writer selection
 // ---------------------------------------------------------------------------
 
-function commitSpan(commit: StreamCommit): string {
-  const time = (commit.part?.state as { time?: { start?: unknown; end?: unknown } } | undefined)?.time
-  const start = num(time?.start)
-  const end = num(time?.end)
-  if (start === undefined || end === undefined || end <= start) {
-    return ""
-  }
-
-  return Locale.duration(end - start)
-}
-
-function patchTitle(file: Record<string, unknown>) {
-  const type = text(file.type)
-  const rel = text(file.relativePath)
-  const filePath = text(file.filePath)
-  if (type === "add") {
-    return `# Created ${rel || viewPath(filePath)}`
-  }
-  if (type === "delete") {
-    return `# Deleted ${rel || viewPath(filePath)}`
-  }
-  if (type === "move") {
-    return `# Moved ${viewPath(filePath)} -> ${rel || viewPath(text(file.movePath))}`
-  }
-  return `← Patched ${rel || viewPath(filePath)}`
-}
-
 function snapFlags(commit: StreamCommit) {
   if (commit.kind === "user") {
     return {
@@ -1066,169 +557,87 @@ function buildTextWriter(commit: StreamCommit, theme: RunEntryTheme): Scrollback
   return textWriter(body, commit, theme, flags)
 }
 
-function buildCodeWriter(commit: StreamCommit, theme: RunEntryTheme): ScrollbackWriter {
-  const info = toolCtx(commit, clean(commit.text))
-  const file = text(info.data.filePath)
-  const content = text(info.data.content)
-  if (!file && !content) {
+function buildSnapshotWriter(commit: StreamCommit, theme: RunEntryTheme, opts: ScrollbackOptions): ScrollbackWriter {
+  const snap = toolSnapshot(commit, clean(commit.text))
+  if (!snap) {
     return buildTextWriter(commit, theme)
   }
 
-  return codeWriter(
-    {
-      title: `# Wrote ${viewPath(file)}`,
-      content,
-      filetype: toolFiletype(file),
-      diagnostics: toolDiagnostics(info.meta, file),
-    },
-    theme,
-    snapFlags(commit),
-  )
-}
-
-function buildDiffWriter(commit: StreamCommit, theme: RunEntryTheme, opts: ScrollbackOptions): ScrollbackWriter {
-  const info = toolCtx(commit, clean(commit.text))
+  const info = toolFrame(commit, clean(commit.text))
   const flags = snapFlags(commit)
 
-  if (commit.tool === "apply_patch") {
-    const files = arr(info.meta.files).map((item) =>
-      item && typeof item === "object" ? (item as Record<string, unknown>) : {},
+  if (snap.kind === "code") {
+    return codeWriter(
+      {
+        title: snap.title,
+        content: snap.content,
+        filetype: toolFiletype(snap.file),
+        diagnostics: toolDiagnostics(info.meta, snap.file ?? ""),
+      },
+      theme,
+      flags,
     )
-    if (files.length === 0) {
+  }
+
+  if (snap.kind === "diff") {
+    if (snap.items.length === 0) {
       return buildTextWriter(commit, theme)
     }
 
-    const list = files.map((file) => {
-      const diff = text(file.diff)
-      const name = text(file.movePath) || text(file.filePath) || text(file.relativePath)
-      return {
-        title: patchTitle(file),
-        diff,
-        filetype: toolFiletype(name),
-        deletions: num(file.deletions) ?? 0,
-        diagnostics: toolDiagnostics(info.meta, name),
-      }
-    })
+    const list = snap.items
+      .map((item) => {
+        if (!item.diff.trim()) {
+          return
+        }
+
+        return {
+          title: item.title,
+          diff: item.diff,
+          filetype: toolFiletype(item.file),
+          deletions: item.deletions,
+          diagnostics: toolDiagnostics(info.meta, item.file ?? ""),
+        }
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item))
+
+    if (list.length === 0) {
+      return buildTextWriter(commit, theme)
+    }
 
     return (ctx) => diffWriter(list, theme, flags, toolDiffView(ctx.width, opts.diffStyle))(ctx)
   }
 
-  const file = text(info.data.filePath)
-  const diff = text(info.meta.diff)
-  if (!file || !diff.trim()) {
-    return buildTextWriter(commit, theme)
-  }
-
-  const list = [
-    {
-      title: `← Edit ${viewPath(file)}`,
-      diff,
-      filetype: toolFiletype(file),
-      diagnostics: toolDiagnostics(info.meta, file),
-    },
-  ]
-
-  return (ctx) => diffWriter(list, theme, flags, toolDiffView(ctx.width, opts.diffStyle))(ctx)
-}
-
-function buildStructuredWriter(commit: StreamCommit, theme: RunEntryTheme): ScrollbackWriter {
-  const info = toolCtx(commit, clean(commit.text))
-  const flags = snapFlags(commit)
-
-  if (commit.tool === "task") {
-    const kind = Locale.titlecase(text(info.data.subagent_type) || "general")
-    const rows: string[] = []
-    const desc = text(info.data.description)
-    if (desc) {
-      rows.push(`◉ ${desc}`)
-    }
-    const title = text(info.state.title)
-    if (title) {
-      rows.push(`↳ ${title}`)
-    }
-    const calls = num(info.meta.toolcalls) ?? num(info.meta.toolCalls) ?? num(info.meta.calls)
-    if (calls !== undefined) {
-      rows.push(`↳ ${Locale.number(calls)} toolcall${calls === 1 ? "" : "s"}`)
-    }
-    const sid = text(info.meta.sessionId) || text(info.meta.sessionID)
-    if (sid) {
-      rows.push(`↳ session ${sid}`)
-    }
-
+  if (snap.kind === "task") {
     return taskWriter(
       {
-        title: `# ${kind} Task`,
-        rows,
-        tail: done(`${kind} task`, commitSpan(commit)),
+        title: snap.title,
+        rows: snap.rows,
+        tail: snap.tail,
       },
       theme,
       flags,
     )
   }
 
-  if (commit.tool === "todowrite") {
-    const items = arr(info.data.todos)
-      .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : {}))
-      .flatMap((item) => {
-        const content = text(item.content)
-        if (!content) {
-          return []
-        }
-
-        return [
-          {
-            status: text(item.status),
-            content,
-          },
-        ]
-      })
-    const doneN = items.filter((item) => item.status === "completed").length
-    const runN = items.filter((item) => item.status === "in_progress").length
-    const left = items.length - doneN - runN
-    const tail = [`${items.length} total`]
-    if (doneN > 0) {
-      tail.push(`${doneN} done`)
-    }
-    if (runN > 0) {
-      tail.push(`${runN} active`)
-    }
-    if (left > 0) {
-      tail.push(`${left} pending`)
-    }
-
+  if (snap.kind === "todo") {
     return todoWriter(
       {
-        items,
-        tail: `${done("todos", commitSpan(commit))} · ${tail.join(" · ")}`,
+        items: snap.items,
+        tail: snap.tail,
       },
       theme,
       flags,
     )
   }
 
-  if (commit.tool === "question") {
-    const answers = arr(info.meta.answers)
-    const items = arr(info.data.questions)
-      .map((item) => (item && typeof item === "object" ? (item as Record<string, unknown>) : {}))
-      .map((item, i) => {
-        const answer = arr(answers[i]).filter((entry): entry is string => typeof entry === "string")
-        return {
-          question: text(item.question) || `Question ${i + 1}`,
-          answer: answer.length > 0 ? answer.join(", ") : "(no answer)",
-        }
-      })
-
-    return questionWriter(
-      {
-        items,
-        tail: done("questions", commitSpan(commit)),
-      },
-      theme,
-      flags,
-    )
-  }
-
-  return buildTextWriter(commit, theme)
+  return questionWriter(
+    {
+      items: snap.items,
+      tail: snap.tail,
+    },
+    theme,
+    flags,
+  )
 }
 
 export function normalizeEntry(commit: StreamCommit): string {
@@ -1292,17 +701,8 @@ export function entryWriter(
   const state = commit.toolState ?? commit.part?.state.status
   if (commit.kind === "tool" && commit.phase === "final" && state === "completed") {
     const view = toolView(commit.tool)
-
-    if (view.snap === "code") {
-      return buildCodeWriter(commit, theme)
-    }
-
-    if (view.snap === "diff") {
-      return buildDiffWriter(commit, theme, opts)
-    }
-
-    if (view.snap === "structured") {
-      return buildStructuredWriter(commit, theme)
+    if (view.snap) {
+      return buildSnapshotWriter(commit, theme, opts)
     }
   }
 

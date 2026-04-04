@@ -137,6 +137,7 @@ export function RunPermissionBody(props: {
   const dims = useTerminalDimensions()
   const [state, setState] = createSignal(createPermissionBodyState(props.request.id))
   const info = createMemo(() => permissionInfo(props.request))
+  const filetype = createMemo(() => toolFiletype(info().file))
   const view = createMemo(() => toolDiffView(dims().width, props.diffStyle))
   const opts = createMemo(() => permissionOptions(state().stage))
   const busy = createMemo(() => state().submitting)
@@ -280,7 +281,7 @@ export function RunPermissionBody(props: {
                   <diff
                     diff={info().diff!}
                     view={view()}
-                    filetype={toolFiletype(info().file)}
+                    filetype={filetype()}
                     showLineNumbers={true}
                     width="100%"
                     wrapMode="word"
