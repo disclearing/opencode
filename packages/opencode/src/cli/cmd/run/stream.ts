@@ -418,11 +418,12 @@ function flushPart(data: SessionData, commits: SessionCommit[], partID: string, 
 
   commits.push({
     kind,
-    text: `[${kind}:interrupted]`,
+    text: "",
     phase: "final",
     source: kind,
     messageID: msg,
     partID,
+    interrupted: true,
   })
 }
 
@@ -473,39 +474,43 @@ function replay(data: SessionData, commits: SessionCommit[], messageID: string, 
 function startTool(part: ToolPart): SessionCommit {
   return {
     kind: "tool",
-    text: `[tool:${part.tool}] ${toolStatus(part)}`,
+    text: toolStatus(part),
     phase: "start",
     source: "tool",
     messageID: part.messageID,
     partID: part.id,
     tool: part.tool,
     part,
+    toolState: "running",
   }
 }
 
 function doneTool(part: ToolPart): SessionCommit {
   return {
     kind: "tool",
-    text: `[tool:${part.tool}:end]`,
+    text: "",
     phase: "final",
     source: "tool",
     messageID: part.messageID,
     partID: part.id,
     tool: part.tool,
     part,
+    toolState: "completed",
   }
 }
 
 function failTool(part: ToolPart, text: string): SessionCommit {
   return {
     kind: "tool",
-    text: `[tool:${part.tool}:error] ${text}`,
+    text,
     phase: "final",
     source: "tool",
     messageID: part.messageID,
     partID: part.id,
     tool: part.tool,
     part,
+    toolState: "error",
+    toolError: text,
   }
 }
 
@@ -670,6 +675,7 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
             partID: part.id,
             tool: part.tool,
             part,
+            toolState: "completed",
           })
         }
 

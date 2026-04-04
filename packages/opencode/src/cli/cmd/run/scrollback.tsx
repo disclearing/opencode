@@ -62,6 +62,8 @@ type ToolCtx = {
   data: ToolDict
   meta: ToolDict
   state: ToolDict
+  status: string
+  error: string
 }
 
 type Draw = (ctx: ToolCtx) => string
@@ -141,12 +143,16 @@ function span(ctx: ToolCtx): string {
 }
 
 function fail(ctx: ToolCtx): string {
+  if (ctx.error) {
+    return `✖ ${ctx.name} failed: ${ctx.error}`
+  }
+
   const state = text(ctx.state.error).trim()
   if (state) {
     return `✖ ${ctx.name} failed: ${state}`
   }
 
-  const raw = ctx.raw.replace(/^\[tool:[^:\]]+:error\]\s*/, "").trim()
+  const raw = ctx.raw.trim()
   if (raw) {
     return `✖ ${ctx.name} failed: ${raw}`
   }
@@ -168,7 +174,7 @@ function progress(ctx: ToolCtx): string {
 }
 
 function final(ctx: ToolCtx): string {
-  const status = text(ctx.state.status)
+  const status = ctx.status
   if (status === "error") {
     return fail(ctx)
   }
@@ -523,6 +529,8 @@ function toolCtx(commit: StreamCommit, raw: string): ToolCtx {
     data: dict(state.input),
     meta: dict(state.metadata),
     state,
+    status: commit.toolState ?? text(state.status),
+    error: (commit.toolError ?? "").trim(),
   }
 }
 
@@ -535,7 +543,7 @@ function formatToolEntry(commit: StreamCommit, raw: string): string {
   }
 
   if (commit.phase === "final") {
-    const status = text(ctx.state.status)
+    const status = ctx.status
     if (status === "error") {
       return fail(ctx)
     }
@@ -636,7 +644,7 @@ function codeStyle() {
 }
 
 function failed(commit: StreamCommit): boolean {
-  return commit.kind === "tool" && commit.part?.state.status === "error"
+  return commit.kind === "tool" && (commit.toolState === "error" || commit.part?.state.status === "error")
 }
 
 function look(commit: StreamCommit, theme: RunEntryTheme): Paint {
@@ -1249,7 +1257,7 @@ export function normalizeEntry(commit: StreamCommit): string {
     }
 
     if (commit.phase === "final") {
-      return raw.trim() === "[assistant:interrupted]" ? "assistant interrupted" : ""
+      return commit.interrupted ? "assistant interrupted" : ""
     }
 
     return raw
@@ -1261,7 +1269,7 @@ export function normalizeEntry(commit: StreamCommit): string {
     }
 
     if (commit.phase === "final") {
-      return raw.trim() === "[reasoning:interrupted]" ? "reasoning interrupted" : ""
+      return commit.interrupted ? "reasoning interrupted" : ""
     }
 
     return raw.replace(/\[REDACTED\]/g, "")
@@ -1283,7 +1291,8 @@ export function entryWriter(
   theme: RunEntryTheme = RUN_THEME_FALLBACK.entry,
   opts: ScrollbackOptions = {},
 ): ScrollbackWriter {
-  if (commit.kind === "tool" && commit.phase === "final" && commit.part?.state.status === "completed") {
+  const state = commit.toolState ?? commit.part?.state.status
+  if (commit.kind === "tool" && commit.phase === "final" && state === "completed") {
     const view = toolView(commit.tool)
 
     if (view.snap === "code") {

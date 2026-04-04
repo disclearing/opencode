@@ -76,6 +76,8 @@ export type StreamPhase = "start" | "progress" | "final"
 
 export type StreamSource = "assistant" | "reasoning" | "tool" | "system"
 
+export type StreamToolState = "running" | "completed" | "error"
+
 export type StreamCommit = {
   kind: EntryKind
   text: string
@@ -85,6 +87,9 @@ export type StreamCommit = {
   partID?: string
   tool?: string
   part?: ToolPart
+  interrupted?: boolean
+  toolState?: StreamToolState
+  toolError?: string
   gap?: boolean
 }
 
