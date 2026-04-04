@@ -1,15 +1,17 @@
-import os from "os"
-import path from "path"
 import stripAnsi from "strip-ansi"
 import type { ToolPart } from "@opencode-ai/sdk/v2"
 import type { Tool } from "../../../tool/tool"
 import type { ApplyPatchTool } from "../../../tool/apply_patch"
+import type { BatchTool } from "../../../tool/batch"
 import type { BashTool } from "../../../tool/bash"
 import type { CodeSearchTool } from "../../../tool/codesearch"
 import type { EditTool } from "../../../tool/edit"
 import type { GlobTool } from "../../../tool/glob"
 import type { GrepTool } from "../../../tool/grep"
+import type { InvalidTool } from "../../../tool/invalid"
 import type { ListTool } from "../../../tool/ls"
+import type { LspTool } from "../../../tool/lsp"
+import type { PlanExitTool } from "../../../tool/plan"
 import type { QuestionTool } from "../../../tool/question"
 import type { ReadTool } from "../../../tool/read"
 import type { SkillTool } from "../../../tool/skill"
@@ -18,9 +20,9 @@ import type { TodoWriteTool } from "../../../tool/todo"
 import type { WebFetchTool } from "../../../tool/webfetch"
 import type { WebSearchTool } from "../../../tool/websearch"
 import type { WriteTool } from "../../../tool/write"
-import { LANGUAGE_EXTENSIONS } from "../../../lsp/language"
 import { Locale } from "../../../util/locale"
-import type { RunDiffStyle, StreamCommit } from "./types"
+import { normalizePath } from "./shared/path"
+import type { StreamCommit } from "./types"
 
 export type ToolView = {
   output: boolean
@@ -126,10 +128,12 @@ type ToolPermissionCtx = {
 }
 
 type ToolDefs = {
+  invalid: typeof InvalidTool
   bash: typeof BashTool
   write: typeof WriteTool
   edit: typeof EditTool
   apply_patch: typeof ApplyPatchTool
+  batch: typeof BatchTool
   task: typeof TaskTool
   todowrite: typeof TodoWriteTool
   question: typeof QuestionTool
@@ -137,10 +141,12 @@ type ToolDefs = {
   glob: typeof GlobTool
   grep: typeof GrepTool
   list: typeof ListTool
+  lsp: typeof LspTool
   webfetch: typeof WebFetchTool
   codesearch: typeof CodeSearchTool
   websearch: typeof WebSearchTool
   skill: typeof SkillTool
+  plan_exit: typeof PlanExitTool
 }
 
 type ToolName = keyof ToolDefs
@@ -274,28 +280,7 @@ function fallbackFinal(ctx: ToolFrame): string {
 }
 
 export function toolPath(input?: string, opts: { home?: boolean } = {}): string {
-  if (!input) {
-    return ""
-  }
-
-  const cwd = process.cwd()
-  const home = os.homedir()
-  const abs = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const rel = path.relative(cwd, abs)
-
-  if (!rel) {
-    return "."
-  }
-
-  if (!rel.startsWith("..")) {
-    return rel
-  }
-
-  if (opts.home && home && (abs === home || abs.startsWith(home + path.sep))) {
-    return abs.replace(home, "~")
-  }
-
-  return abs
+  return normalizePath(input, opts)
 }
 
 function fallbackInline(ctx: ToolFrame): ToolInline {
@@ -451,6 +436,62 @@ function runQuestion(p: ToolProps<typeof QuestionTool>): ToolInline {
   return {
     icon: "→",
     title: `Asked ${total} question${total === 1 ? "" : "s"}`,
+  }
+}
+
+function runInvalid(p: ToolProps<typeof InvalidTool>): ToolInline {
+  return {
+    icon: "✗",
+    title: text(p.frame.state.title) || "Invalid Tool",
+    mode: "block",
+    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+  }
+}
+
+function runBatch(p: ToolProps<typeof BatchTool>): ToolInline {
+  const calls = list(p.input.tool_calls).length
+  return {
+    icon: "#",
+    title: text(p.frame.state.title) || (calls > 0 ? `Batch ${calls} tool${calls === 1 ? "" : "s"}` : "Batch"),
+    mode: "block",
+    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
+  }
+}
+
+function lspTitle(
+  input: {
+    operation?: string
+    filePath?: string
+    line?: number
+    character?: number
+  },
+  opts: { home?: boolean } = {},
+): string {
+  const op = input.operation || "request"
+  const file = input.filePath ? toolPath(input.filePath, opts) : ""
+  const line = typeof input.line === "number" ? input.line : undefined
+  const char = typeof input.character === "number" ? input.character : undefined
+  const pos = line !== undefined && char !== undefined ? `:${line}:${char}` : ""
+  if (!file) {
+    return `LSP ${op}`
+  }
+
+  return `LSP ${op} ${file}${pos}`
+}
+
+function runLsp(p: ToolProps<typeof LspTool>): ToolInline {
+  return {
+    icon: "→",
+    title: text(p.frame.state.title) || lspTitle(p.input),
+  }
+}
+
+function runPlanExit(p: ToolProps<typeof PlanExitTool>): ToolInline {
+  return {
+    icon: "→",
+    title: text(p.frame.state.title) || "Switching to build agent",
+    mode: "block",
+    body: p.frame.status === "completed" ? text(p.frame.state.output) : undefined,
   }
 }
 
@@ -834,6 +875,10 @@ function scrollQuestionFinal(p: ToolProps<typeof QuestionTool>): string {
   return rows.join("\n")
 }
 
+function scrollLspStart(p: ToolProps<typeof LspTool>): string {
+  return `→ ${lspTitle(p.input)}`
+}
+
 function scrollSkillStart(p: ToolProps<typeof SkillTool>): string {
   return `→ Skill "${p.input.name ?? ""}"`
 }
@@ -991,7 +1036,33 @@ function permCodeSearch(p: ToolPermissionProps<typeof CodeSearchTool>): ToolPerm
   }
 }
 
+function permLsp(p: ToolPermissionProps<typeof LspTool>): ToolPermissionInfo {
+  const file = p.input.filePath || ""
+  const line = typeof p.input.line === "number" ? p.input.line : undefined
+  const char = typeof p.input.character === "number" ? p.input.character : undefined
+  const pos = line !== undefined && char !== undefined ? `${line}:${char}` : undefined
+  return {
+    icon: "→",
+    title: lspTitle(p.input, { home: true }),
+    lines: [
+      ...(p.input.operation ? [`Operation: ${p.input.operation}`] : []),
+      ...(file ? [`Path: ${toolPath(file, { home: true })}`] : []),
+      ...(pos ? [`Position: ${pos}`] : []),
+    ],
+  }
+}
+
 const TOOL_RULES = {
+  invalid: {
+    view: {
+      output: true,
+      final: false,
+    },
+    run: runInvalid,
+    scroll: {
+      start: () => "",
+    },
+  },
   bash: {
     view: {
       output: true,
@@ -1041,6 +1112,16 @@ const TOOL_RULES = {
     scroll: {
       start: scrollPatchStart,
       final: scrollPatchFinal,
+    },
+  },
+  batch: {
+    view: {
+      output: true,
+      final: false,
+    },
+    run: runBatch,
+    scroll: {
+      start: () => "",
     },
   },
   task: {
@@ -1127,6 +1208,17 @@ const TOOL_RULES = {
     },
     permission: permList,
   },
+  lsp: {
+    view: {
+      output: false,
+      final: false,
+    },
+    run: runLsp,
+    scroll: {
+      start: scrollLspStart,
+    },
+    permission: permLsp,
+  },
   webfetch: {
     view: {
       output: false,
@@ -1168,6 +1260,16 @@ const TOOL_RULES = {
     run: runSkill,
     scroll: {
       start: scrollSkillStart,
+    },
+  },
+  plan_exit: {
+    view: {
+      output: true,
+      final: false,
+    },
+    run: runPlanExit,
+    scroll: {
+      start: () => "",
     },
   },
 } as const satisfies ToolRegistry
@@ -1299,26 +1401,4 @@ export function toolSnapshot(commit: StreamCommit, raw: string): ToolSnapshot | 
   } catch {
     return
   }
-}
-
-export function toolFiletype(input?: string): string | undefined {
-  if (!input) {
-    return
-  }
-
-  const ext = path.extname(input)
-  const lang = LANGUAGE_EXTENSIONS[ext]
-  if (["typescriptreact", "javascriptreact", "javascript"].includes(lang)) {
-    return "typescript"
-  }
-
-  return lang
-}
-
-export function toolDiffView(width: number, style: RunDiffStyle | undefined): "unified" | "split" {
-  if (style === "stacked") {
-    return "unified"
-  }
-
-  return width > 120 ? "split" : "unified"
 }
