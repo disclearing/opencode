@@ -138,6 +138,17 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
   let fault: unknown
   let closed = false
 
+  const fail = (error: unknown) => {
+    if (fault) {
+      return
+    }
+
+    fault = error
+    const next = wait
+    wait = undefined
+    next?.reject(error)
+  }
+
   const write = (commits: StreamCommit[]) => {
     for (const commit of commits) {
       log?.write("ui.commit", commit)
@@ -154,12 +165,12 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
       return
     }
 
-    tick += 1
     const next = wait
-    if (!next || !next.armed || tick <= next.tick) {
+    if (!next || !next.armed) {
       return
     }
 
+    tick = next.tick + 1
     wait = undefined
     next.resolve()
   }
@@ -220,12 +231,12 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
       }
     } catch (error) {
       if (!abort.signal.aborted) {
-        fault = error
-        const next = wait
-        wait = undefined
-        next?.reject(error)
+        fail(error)
       }
     } finally {
+      if (!abort.signal.aborted && !fault) {
+        fail(new Error("session event stream closed"))
+      }
       closeStream()
     }
   })()
