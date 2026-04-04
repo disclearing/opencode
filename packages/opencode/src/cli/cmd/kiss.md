@@ -126,7 +126,7 @@ fullscreen/direct components right now.
 
 ### Core Architecture
 
-- [ ] 2. Stop treating direct mode as a second session app.
+- [x] 2. Stop treating direct mode as a second session app.
      Files: `packages/opencode/src/cli/cmd/run/runtime.ts`,
      `packages/opencode/src/cli/cmd/run/stream.ts`,
      `packages/opencode/src/cli/cmd/run/footer.view.tsx`,

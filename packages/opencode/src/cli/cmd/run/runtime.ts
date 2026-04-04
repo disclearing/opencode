@@ -7,7 +7,7 @@ import { Filesystem } from "../../../util/filesystem"
 import { Locale } from "../../../util/locale"
 import { RunFooter } from "./footer"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
-import { createSessionData, formatUnknownError, runPromptTurn } from "./stream"
+import { createSessionTransport, formatUnknownError } from "./stream.transport"
 import { resolveRunTheme } from "./theme"
 import { trace } from "./trace"
 import type { FooterApi, FooterKeybinds, FooterPatch, RunDiffStyle, RunInput } from "./types"
@@ -690,36 +690,41 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
 
   try {
     let includeFiles = true
-    let state = createSessionData()
-    await runPromptQueue({
+    const stream = await createSessionTransport({
+      sdk: ctx.sdk,
+      sessionID: ctx.sessionID,
+      thinking: input.thinking,
+      limits: () => limits,
       footer,
-      initialInput: input.initialInput,
-      run: async (prompt, signal) => {
-        try {
-          state = await runPromptTurn({
-            sdk: ctx.sdk,
-            sessionID: ctx.sessionID,
-            agent: ctx.agent,
-            model: ctx.model,
-            variant: activeVariant,
-            prompt,
-            files: input.files,
-            includeFiles,
-            thinking: input.thinking,
-            limits,
-            footer,
-            signal,
-            data: state,
-          })
-          includeFiles = false
-        } catch (error) {
-          if (signal.aborted || footer.isClosed) {
-            return
-          }
-          footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
-        }
-      },
     })
+
+    try {
+      await runPromptQueue({
+        footer,
+        initialInput: input.initialInput,
+        run: async (prompt, signal) => {
+          try {
+            await stream.runPromptTurn({
+              agent: ctx.agent,
+              model: ctx.model,
+              variant: activeVariant,
+              prompt,
+              files: input.files,
+              includeFiles,
+              signal,
+            })
+            includeFiles = false
+          } catch (error) {
+            if (signal.aborted || footer.isClosed) {
+              return
+            }
+            footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
+          }
+        },
+      })
+    } finally {
+      await stream.close()
+    }
   } finally {
     process.off("SIGINT", sigint)
 
