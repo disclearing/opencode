@@ -7,6 +7,7 @@ import { entryWriter, normalizeEntry, spacerWriter } from "./scrollback"
 import type { RunTheme } from "./theme"
 import type {
   FooterApi,
+  FooterEvent,
   FooterKeybinds,
   FooterPatch,
   FooterState,
@@ -158,7 +159,67 @@ export class RunFooter implements FooterApi {
     }
   }
 
-  public patch(next: FooterPatch): void {
+  public event(next: FooterEvent): void {
+    if (next.type === "queue") {
+      this.patch({ queue: next.queue })
+      return
+    }
+
+    if (next.type === "first") {
+      this.patch({ first: next.first })
+      return
+    }
+
+    if (next.type === "model") {
+      this.patch({ model: next.model })
+      return
+    }
+
+    if (next.type === "turn.send") {
+      this.patch({
+        phase: "running",
+        status: "sending prompt",
+        queue: next.queue,
+      })
+      return
+    }
+
+    if (next.type === "turn.wait") {
+      this.patch({
+        phase: "running",
+        status: "waiting for assistant",
+      })
+      return
+    }
+
+    if (next.type === "turn.idle") {
+      this.patch({
+        phase: "idle",
+        status: "",
+        queue: next.queue,
+      })
+      return
+    }
+
+    if (next.type === "turn.duration") {
+      this.patch({ duration: next.duration })
+      return
+    }
+
+    if (next.type === "stream.patch") {
+      if (typeof next.patch.status === "string" && next.patch.phase === undefined) {
+        this.patch({ phase: "running", ...next.patch })
+        return
+      }
+
+      this.patch(next.patch)
+      return
+    }
+
+    this.present(next.view)
+  }
+
+  private patch(next: FooterPatch): void {
     if (this.destroyed || this.renderer.isDestroyed) {
       return
     }
@@ -191,7 +252,7 @@ export class RunFooter implements FooterApi {
     }
   }
 
-  public present(view: FooterView): void {
+  private present(view: FooterView): void {
     if (this.destroyed || this.renderer.isDestroyed) {
       return
     }

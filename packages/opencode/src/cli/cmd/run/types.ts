@@ -56,6 +56,43 @@ export type FooterOutput = {
   view?: FooterView
 }
 
+export type FooterEvent =
+  | {
+      type: "queue"
+      queue: number
+    }
+  | {
+      type: "first"
+      first: boolean
+    }
+  | {
+      type: "model"
+      model: string
+    }
+  | {
+      type: "turn.send"
+      queue: number
+    }
+  | {
+      type: "turn.wait"
+    }
+  | {
+      type: "turn.idle"
+      queue: number
+    }
+  | {
+      type: "turn.duration"
+      duration: string
+    }
+  | {
+      type: "stream.patch"
+      patch: FooterPatch
+    }
+  | {
+      type: "stream.view"
+      view: FooterView
+    }
+
 export type PermissionReply = Parameters<OpencodeClient["permission"]["reply"]>[0]
 
 export type QuestionReply = Parameters<OpencodeClient["question"]["reply"]>[0]
@@ -99,8 +136,7 @@ export type FooterApi = {
   onQuestionReply(fn: (input: QuestionReply) => void | Promise<void>): () => void
   onQuestionReject(fn: (input: QuestionReject) => void | Promise<void>): () => void
   onClose(fn: () => void): () => void
-  patch(next: FooterPatch): void
-  present(view: FooterView): void
+  event(next: FooterEvent): void
   append(commit: StreamCommit): void
   idle(): Promise<void>
   close(): void

@@ -10,7 +10,7 @@ import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { createSessionTransport, formatUnknownError } from "./stream.transport"
 import { resolveRunTheme } from "./theme"
 import { trace } from "./trace"
-import type { FooterApi, FooterKeybinds, FooterPatch, RunDiffStyle, RunInput } from "./types"
+import type { FooterApi, FooterEvent, FooterKeybinds, RunDiffStyle, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 7
 const HISTORY_LIMIT = 200
@@ -425,9 +425,9 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     done = undefined
   }
 
-  const patch = (next: FooterPatch) => {
-    log?.write("ui.patch", next)
-    input.footer.patch(next)
+  const emit = (next: FooterEvent, row: Record<string, unknown>) => {
+    log?.write("ui.patch", row)
+    input.footer.event(next)
   }
 
   const pump = async () => {
@@ -444,11 +444,17 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           continue
         }
 
-        patch({
-          phase: "running",
-          status: "sending prompt",
-          queue: q.length,
-        })
+        emit(
+          {
+            type: "turn.send",
+            queue: q.length,
+          },
+          {
+            phase: "running",
+            status: "sending prompt",
+            queue: q.length,
+          },
+        )
         const start = Date.now()
         const next = new AbortController()
         ctrl = next
@@ -476,18 +482,31 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           if (ctrl === next) {
             ctrl = undefined
           }
-          patch({
-            duration: Locale.duration(Math.max(0, Date.now() - start)),
-          })
+          const duration = Locale.duration(Math.max(0, Date.now() - start))
+          emit(
+            {
+              type: "turn.duration",
+              duration,
+            },
+            {
+              duration,
+            },
+          )
         }
       }
     } finally {
       run = false
-      patch({
-        phase: "idle",
-        status: "",
-        queue: q.length,
-      })
+      emit(
+        {
+          type: "turn.idle",
+          queue: q.length,
+        },
+        {
+          phase: "idle",
+          status: "",
+          queue: q.length,
+        },
+      )
       finish()
     }
   }
@@ -504,8 +523,24 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
     }
 
     q.push(prompt)
-    patch({ queue: q.length })
-    patch({ first: false })
+    emit(
+      {
+        type: "queue",
+        queue: q.length,
+      },
+      {
+        queue: q.length,
+      },
+    )
+    emit(
+      {
+        type: "first",
+        first: false,
+      },
+      {
+        first: false,
+      },
+    )
     void pump().catch(fail)
   }
 
@@ -678,7 +713,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
       return
     }
 
-    footer.patch({
+    footer.event({
+      type: "model",
       model: formatModelLabel(ctx.model, activeVariant),
     })
   })

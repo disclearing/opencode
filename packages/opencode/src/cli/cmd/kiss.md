@@ -157,7 +157,7 @@ fullscreen/direct components right now.
      Target: keep spacing and newline behavior inside the renderer or writer layer,
      not in the transcript model.
 
-- [ ] 7. Put one module in charge of footer state.
+- [x] 7. Put one module in charge of footer state.
      Files: `packages/opencode/src/cli/cmd/run/runtime.ts`, `packages/opencode/src/cli/cmd/run/stream.ts`, `packages/opencode/src/cli/cmd/run/footer.ts`
      Why: queue, phase, duration, status, interrupt, exit, and active view are
      mutated from several places.

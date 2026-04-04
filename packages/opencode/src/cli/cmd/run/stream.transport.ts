@@ -217,14 +217,20 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
               ? { phase: "running" as const, ...next.footer.patch }
               : next.footer.patch
           log?.write("ui.patch", patch)
-          input.footer.patch(patch)
+          input.footer.event({
+            type: "stream.patch",
+            patch,
+          })
         }
 
         if (next.footer?.view) {
           log?.write("ui.patch", {
             view: next.footer.view,
           })
-          input.footer.present(next.footer.view)
+          input.footer.event({
+            type: "stream.view",
+            view: next.footer.view,
+          })
         }
 
         mark(event)
@@ -296,9 +302,8 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
           phase: "running",
           status: "waiting for assistant",
         })
-        input.footer.patch({
-          phase: "running",
-          status: "waiting for assistant",
+        input.footer.event({
+          type: "turn.wait",
         })
       }
 
