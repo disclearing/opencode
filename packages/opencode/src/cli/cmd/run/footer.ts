@@ -4,7 +4,9 @@ import { createComponent, createSignal, type Accessor, type Setter } from "solid
 import { TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
 import { printableBinding } from "./prompt.shared"
 import { RunFooterView } from "./footer.view"
-import { entryWriter, normalizeEntry, spacerWriter } from "./scrollback"
+import { normalizeEntry } from "./scrollback.format"
+import { entryWriter } from "./scrollback"
+import { spacerWriter } from "./scrollback.writer"
 import type { RunTheme } from "./theme"
 import type {
   FooterApi,

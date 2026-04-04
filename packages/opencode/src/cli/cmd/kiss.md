@@ -280,7 +280,7 @@ For items that mention fullscreen parity, do it in two phases:
       Target: one typed tool presentation registry used by non-interactive output,
       scrollback output, and permission copy.
 
-- [ ] 18. Reduce `scrollback.tsx` to one job.
+- [x] 18. Reduce `scrollback.tsx` to one job.
       Files: `packages/opencode/src/cli/cmd/run/scrollback.tsx`
       Why: this file currently mixes text normalization, tool summary rendering, path
       helpers, filetype helpers, diagnostics lookup, widget components, and writer
