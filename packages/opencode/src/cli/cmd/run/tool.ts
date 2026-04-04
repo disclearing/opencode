@@ -1,3 +1,5 @@
+import os from "os"
+import path from "path"
 import stripAnsi from "strip-ansi"
 import type { ToolPart } from "@opencode-ai/sdk/v2"
 import type { Tool } from "../../../tool/tool"
@@ -20,9 +22,9 @@ import type { TodoWriteTool } from "../../../tool/todo"
 import type { WebFetchTool } from "../../../tool/webfetch"
 import type { WebSearchTool } from "../../../tool/websearch"
 import type { WriteTool } from "../../../tool/write"
+import { LANGUAGE_EXTENSIONS } from "../../../lsp/language"
 import { Locale } from "../../../util/locale"
-import { normalizePath } from "./shared/path"
-import type { StreamCommit } from "./types"
+import type { RunDiffStyle, StreamCommit } from "./types"
 
 export type ToolView = {
   output: boolean
@@ -280,7 +282,28 @@ function fallbackFinal(ctx: ToolFrame): string {
 }
 
 export function toolPath(input?: string, opts: { home?: boolean } = {}): string {
-  return normalizePath(input, opts)
+  if (!input) {
+    return ""
+  }
+
+  const cwd = process.cwd()
+  const home = os.homedir()
+  const abs = path.isAbsolute(input) ? input : path.resolve(cwd, input)
+  const rel = path.relative(cwd, abs)
+
+  if (!rel) {
+    return "."
+  }
+
+  if (!rel.startsWith("..")) {
+    return rel
+  }
+
+  if (opts.home && home && (abs === home || abs.startsWith(home + path.sep))) {
+    return abs.replace(home, "~")
+  }
+
+  return abs
 }
 
 function fallbackInline(ctx: ToolFrame): ToolInline {
@@ -1401,4 +1424,26 @@ export function toolSnapshot(commit: StreamCommit, raw: string): ToolSnapshot | 
   } catch {
     return
   }
+}
+
+export function toolFiletype(input?: string): string | undefined {
+  if (!input) {
+    return
+  }
+
+  const ext = path.extname(input)
+  const lang = LANGUAGE_EXTENSIONS[ext]
+  if (["typescriptreact", "javascriptreact", "javascript"].includes(lang)) {
+    return "typescript"
+  }
+
+  return lang
+}
+
+export function toolDiffView(width: number, style: RunDiffStyle | undefined): "unified" | "split" {
+  if (style === "stacked") {
+    return "unified"
+  }
+
+  return width > 120 ? "split" : "unified"
 }

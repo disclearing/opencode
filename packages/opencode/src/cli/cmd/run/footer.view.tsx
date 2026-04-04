@@ -3,9 +3,10 @@ import { useTerminalDimensions } from "@opentui/solid"
 import { Match, Show, Switch, createMemo } from "solid-js"
 import "opentui-spinner/solid"
 import { createColors, createFrames } from "../tui/ui/spinner"
-import { RunPromptBody, createPromptState, hintFlags, printableBinding } from "./footer.prompt"
+import { RunPromptBody, createPromptState, hintFlags } from "./footer.prompt"
 import { RunPermissionBody } from "./footer.permission"
 import { RunQuestionBody } from "./footer.question"
+import { printableBinding } from "./prompt.shared"
 import type {
   FooterKeybinds,
   FooterState,

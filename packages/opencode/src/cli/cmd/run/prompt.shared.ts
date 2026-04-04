@@ -79,6 +79,11 @@ export function printableBinding(binding: string, leader: string): string {
   return text.replace(/escape/g, "esc")
 }
 
+export function isExitCommand(input: string): boolean {
+  const text = input.trim().toLowerCase()
+  return text === "/exit" || text === "/quit"
+}
+
 export function promptInfo(event: {
   name: string
   ctrl?: boolean

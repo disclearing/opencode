@@ -288,7 +288,7 @@ For items that mention fullscreen parity, do it in two phases:
       Target: keep only entry -> writer selection there and move formatters, widgets,
       and helpers out.
 
-- [ ] 19. Remove small repeated helpers and make one shared home for them.
+- [x] 19. Remove small repeated helpers and make one shared home for them.
       Files (this branch): `packages/opencode/src/cli/cmd/run.ts`,
       `packages/opencode/src/cli/cmd/run/footer.ts`,
       `packages/opencode/src/cli/cmd/run/footer.view.tsx`,

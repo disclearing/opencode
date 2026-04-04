@@ -1,4 +1,5 @@
 import { Locale } from "../../../util/locale"
+import { isExitCommand } from "./prompt.shared"
 import { trace } from "./trace"
 import type { FooterApi, FooterEvent } from "./types"
 
@@ -6,11 +7,6 @@ export type QueueInput = {
   footer: FooterApi
   initialInput?: string
   run: (prompt: string, signal: AbortSignal) => Promise<void>
-}
-
-function isExitPrompt(text: string): boolean {
-  const value = text.trim().toLowerCase()
-  return value === "/exit" || value === "/quit"
 }
 
 export async function runPromptQueue(input: QueueInput): Promise<void> {
@@ -139,7 +135,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       return
     }
 
-    if (isExitPrompt(prompt)) {
+    if (isExitCommand(prompt)) {
       input.footer.close()
       return
     }

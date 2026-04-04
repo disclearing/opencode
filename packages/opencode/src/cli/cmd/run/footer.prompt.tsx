@@ -4,6 +4,7 @@ import { useKeyboard } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
 import {
   createPromptHistory,
+  isExitCommand,
   movePromptHistory,
   promptCycle,
   promptHit,
@@ -77,11 +78,6 @@ export type PromptState = {
   bind: (area?: Area) => void
 }
 
-function isExit(input: string): boolean {
-  const text = input.trim().toLowerCase()
-  return text === "/exit" || text === "/quit"
-}
-
 function clamp(rows: number): number {
   return Math.max(TEXTAREA_MIN_ROWS, Math.min(TEXTAREA_MAX_ROWS, rows))
 }
@@ -94,8 +90,6 @@ export function hintFlags(width: number) {
     variant: width >= HINT_BREAKPOINTS.variant,
   }
 }
-
-export { printableBinding } from "./prompt.shared"
 
 export function RunPromptBody(props: {
   theme: () => RunFooterTheme
@@ -356,7 +350,7 @@ export function createPromptState(input: PromptInput): PromptState {
       return
     }
 
-    if (isExit(text)) {
+    if (isExitCommand(text)) {
       input.onExit()
       return
     }
