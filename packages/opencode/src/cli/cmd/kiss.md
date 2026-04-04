@@ -205,7 +205,7 @@ For items that mention fullscreen parity, do it in two phases:
       Target: split into `session event store or projector` and
       `prompt turn transport`.
 
-- [ ] 17. Reduce `runtime.ts` to one job.
+- [x] 17. Reduce `runtime.ts` to one job.
       Files: `packages/opencode/src/cli/cmd/run/runtime.ts`
       Why: this file currently owns renderer lifecycle, splash, prompt queue, session
       loading, history loading, keybind loading, model info loading, variant

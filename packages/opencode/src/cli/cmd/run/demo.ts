@@ -5,6 +5,31 @@ import type { FooterApi, PermissionReply, QuestionReject, QuestionReply, RunDemo
 
 const KINDS = ["text", "reasoning", "bash", "write", "edit", "patch", "task", "todo", "question", "error", "mix"]
 
+const SAMPLE_TEXT = [
+  "# Demo markdown",
+  "",
+  "This is sample assistant output for direct mode formatting checks.",
+  "It includes **bold**, _italic_, and `inline code`.",
+  "",
+  "- bullet: short line",
+  "- bullet: long line that should wrap cleanly in narrow terminals while keeping list indentation readable",
+  "- bullet: [link text](https://example.com)",
+  "",
+  "1. ordered item",
+  "2. second ordered item",
+  "",
+  "> quote line for spacing and style checks",
+  "",
+  "```ts",
+  "const sample = { ok: true, count: 42 }",
+  "```",
+  "",
+  "| key   | value |",
+  "| ----- | ----- |",
+  "| alpha | one   |",
+  "| beta  | two   |",
+].join("\n")
+
 type Ref = {
   msg: string
   part: string
@@ -620,7 +645,7 @@ function emitQuestion(state: State): void {
 
 async function emitFmt(state: State, kind: string, body: string, signal?: AbortSignal): Promise<boolean> {
   if (kind === "text") {
-    await emitText(state, body || "Demo assistant output with markdown, lists, and wrapping text.", signal)
+    await emitText(state, body || SAMPLE_TEXT, signal)
     return true
   }
 
@@ -741,7 +766,7 @@ export function createRunDemo(input: Input) {
     }
 
     if (input.mode === "text") {
-      await emitFmt(state, "text", input.text ?? "demo text")
+      await emitFmt(state, "text", input.text ?? SAMPLE_TEXT)
     }
   }
 
