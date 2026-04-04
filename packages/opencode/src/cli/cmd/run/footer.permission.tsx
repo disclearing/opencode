@@ -5,7 +5,7 @@ import path from "path"
 import os from "os"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
 import { Locale } from "../../../util/locale"
-import { toolDiffView, toolFiletype } from "./scrollback"
+import { toolDiffView, toolFiletype } from "./tool"
 import type { RunFooterTheme } from "./theme"
 import type { PermissionReply, RunDiffStyle } from "./types"
 

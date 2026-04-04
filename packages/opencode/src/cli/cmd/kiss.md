@@ -164,7 +164,7 @@ fullscreen/direct components right now.
      Target: one footer controller owns state transitions; everyone else emits simple
      events into it.
 
-- [ ] 15. Fix the dependency direction between modules.
+- [x] 15. Fix the dependency direction between modules.
       Files: `packages/opencode/src/cli/cmd/run/scrollback.tsx`, `packages/opencode/src/cli/cmd/run/stream.ts`, `packages/opencode/src/cli/cmd/run/footer.permission.tsx`
       Why: `scrollback.tsx` imports `toolView()` from `stream.ts`, and
       `footer.permission.tsx` imports `toolDiffView()` and `toolFiletype()` from
@@ -181,13 +181,13 @@ fullscreen/direct components right now.
      Target: keep one runtime and pass a small `boot()` callback that resolves
      `{ sdk, sessionID, sessionTitle, agent, model, variant }`.
 
-- [ ] 3. Remove per-turn event subscriptions.
+- [x] 3. Remove per-turn event subscriptions.
      Files: `packages/opencode/src/cli/cmd/run/stream.ts`
      Why: `runPromptTurn()` opens `sdk.event.subscribe()` for every prompt. That adds
      extra abort, close, and reply plumbing and makes session state turn-local.
      Target: one session-level subscription for the whole interactive run.
 
-- [ ] 16. Reduce `stream.ts` to one job.
+- [x] 16. Reduce `stream.ts` to one job.
       Files: `packages/opencode/src/cli/cmd/run/stream.ts`
       Why: this file currently mixes network orchestration, subscription lifecycle,
       reducer logic, footer-view selection, permission and question reply wiring, echo

@@ -12,12 +12,11 @@ import {
 } from "@opentui/core"
 import { createScrollbackWriter, type JSX } from "@opentui/solid"
 import { For, Show } from "solid-js"
-import { LANGUAGE_EXTENSIONS } from "../../../lsp/language"
 import { Filesystem } from "../../../util/filesystem"
 import { Locale } from "../../../util/locale"
-import { toolView } from "./stream"
+import { toolDiffView, toolFiletype, toolView } from "./tool"
 import { RUN_THEME_FALLBACK, type RunEntryTheme } from "./theme"
-import type { RunDiffStyle, ScrollbackOptions, StreamCommit } from "./types"
+import type { ScrollbackOptions, StreamCommit } from "./types"
 
 function clean(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
@@ -91,28 +90,6 @@ function view(input: string): string {
 
 function viewPath(input: string): string {
   return view(input)
-}
-
-export function toolFiletype(input?: string): string | undefined {
-  if (!input) {
-    return
-  }
-
-  const ext = path.extname(input)
-  const lang = LANGUAGE_EXTENSIONS[ext]
-  if (["typescriptreact", "javascriptreact", "javascript"].includes(lang)) {
-    return "typescript"
-  }
-
-  return lang
-}
-
-export function toolDiffView(width: number, style: RunDiffStyle | undefined): "unified" | "split" {
-  if (style === "stacked") {
-    return "unified"
-  }
-
-  return width > 120 ? "split" : "unified"
 }
 
 function toolDiagnostics(meta: ToolDict, file: string): string[] {
