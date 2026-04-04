@@ -114,9 +114,8 @@ function hint(request: QuestionRequest, state: QuestionBodyState): string {
 export function RunQuestionBody(props: {
   request: QuestionRequest
   theme: RunFooterTheme
-  onReply?: (input: QuestionReply) => void | Promise<void>
-  onReject?: (input: QuestionReject) => void | Promise<void>
-  onStatus: (text: string) => void
+  onReply: (input: QuestionReply) => void | Promise<void>
+  onReject: (input: QuestionReject) => void | Promise<void>
 }) {
   const [state, setState] = createSignal(createQuestionBodyState(props.request.id))
   const single = createMemo(() => questionSingle(props.request))
@@ -181,11 +180,6 @@ export function RunQuestionBody(props: {
   }
 
   const beginReply = async (input: QuestionReply) => {
-    if (!props.onReply) {
-      props.onStatus("question queue unavailable")
-      return
-    }
-
     setState((prev) => ({
       ...prev,
       submitting: true,
@@ -202,11 +196,6 @@ export function RunQuestionBody(props: {
   }
 
   const beginReject = async (input: QuestionReject) => {
-    if (!props.onReject) {
-      props.onStatus("question queue unavailable")
-      return
-    }
-
     setState((prev) => ({
       ...prev,
       submitting: true,

@@ -121,17 +121,6 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
     void events.stream.return(undefined).catch(() => {})
   }
 
-  const offPermission = input.footer.onPermissionReply(async (payload) => {
-    log?.write("send.permission.reply", payload)
-    await input.sdk.permission.reply(payload)
-  })
-  const offQuestion = input.footer.onQuestionReply(async (payload) => {
-    await input.sdk.question.reply(payload)
-  })
-  const offReject = input.footer.onQuestionReject(async (payload) => {
-    await input.sdk.question.reject(payload)
-  })
-
   let data = createSessionData()
   let wait: Wait | undefined
   let tick = 0
@@ -359,9 +348,6 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
     }
 
     closed = true
-    offPermission()
-    offQuestion()
-    offReject()
     input.signal?.removeEventListener("abort", halt)
     abort.abort()
     closeStream()

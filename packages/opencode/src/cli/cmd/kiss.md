@@ -213,7 +213,7 @@ fullscreen/direct components right now.
      Target: keep it as a view shell. Move prompt control, permission control, and
      question control into smaller modules or reuse fullscreen logic.
 
-- [ ] 9. Stop routing permission and question replies through a mini event bus.
+- [x] 9. Stop routing permission and question replies through a mini event bus.
      Files: `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/stream.ts`
      Why: the current path is
      `view -> RunFooter callback sets -> stream.ts reply handlers -> sdk`.

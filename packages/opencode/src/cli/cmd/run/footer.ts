@@ -33,6 +33,9 @@ type RunFooterOptions = {
   theme: RunTheme
   keybinds: FooterKeybinds
   diffStyle: RunDiffStyle
+  onPermissionReply: (input: PermissionReply) => void | Promise<void>
+  onQuestionReply: (input: QuestionReply) => void | Promise<void>
+  onQuestionReject: (input: QuestionReject) => void | Promise<void>
   onCycleVariant?: () => CycleResult | void
   onInterrupt?: () => void
   onExit?: () => void
@@ -46,9 +49,6 @@ export class RunFooter implements FooterApi {
   private destroyed = false
   private prompts = new Set<(text: string) => void>()
   private closes = new Set<() => void>()
-  private permissions = new Set<(input: PermissionReply) => void | Promise<void>>()
-  private questions = new Set<(input: QuestionReply) => void | Promise<void>>()
-  private rejects = new Set<(input: QuestionReject) => void | Promise<void>>()
   private seen = new Set<string>()
   private queue: StreamCommit[] = []
   private pending = false
@@ -136,27 +136,6 @@ export class RunFooter implements FooterApi {
     this.closes.add(fn)
     return () => {
       this.closes.delete(fn)
-    }
-  }
-
-  public onPermissionReply(fn: (input: PermissionReply) => void | Promise<void>): () => void {
-    this.permissions.add(fn)
-    return () => {
-      this.permissions.delete(fn)
-    }
-  }
-
-  public onQuestionReply(fn: (input: QuestionReply) => void | Promise<void>): () => void {
-    this.questions.add(fn)
-    return () => {
-      this.questions.delete(fn)
-    }
-  }
-
-  public onQuestionReject(fn: (input: QuestionReject) => void | Promise<void>): () => void {
-    this.rejects.add(fn)
-    return () => {
-      this.rejects.delete(fn)
     }
   }
 
@@ -331,9 +310,6 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
-    this.permissions.clear()
-    this.questions.clear()
-    this.rejects.clear()
     this.seen.clear()
   }
 
@@ -404,36 +380,15 @@ export class RunFooter implements FooterApi {
   }
 
   private handlePermissionReply = async (input: PermissionReply): Promise<void> => {
-    if (this.permissions.size === 0) {
-      this.patch({ status: "permission queue unavailable" })
-      throw new Error("permission queue unavailable")
-    }
-
-    for (const fn of [...this.permissions]) {
-      await fn(input)
-    }
+    await this.options.onPermissionReply(input)
   }
 
   private handleQuestionReply = async (input: QuestionReply): Promise<void> => {
-    if (this.questions.size === 0) {
-      this.patch({ status: "question queue unavailable" })
-      throw new Error("question queue unavailable")
-    }
-
-    for (const fn of [...this.questions]) {
-      await fn(input)
-    }
+    await this.options.onQuestionReply(input)
   }
 
   private handleQuestionReject = async (input: QuestionReject): Promise<void> => {
-    if (this.rejects.size === 0) {
-      this.patch({ status: "question queue unavailable" })
-      throw new Error("question queue unavailable")
-    }
-
-    for (const fn of [...this.rejects]) {
-      await fn(input)
-    }
+    await this.options.onQuestionReject(input)
   }
 
   private handleCycle = (): void => {
@@ -568,9 +523,6 @@ export class RunFooter implements FooterApi {
     this.renderer.off(CliRenderEvents.DESTROY, this.handleDestroy)
     this.prompts.clear()
     this.closes.clear()
-    this.permissions.clear()
-    this.questions.clear()
-    this.rejects.clear()
     this.seen.clear()
   }
 

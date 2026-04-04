@@ -132,9 +132,6 @@ export type StreamCommit = {
 export type FooterApi = {
   readonly isClosed: boolean
   onPrompt(fn: (text: string) => void): () => void
-  onPermissionReply(fn: (input: PermissionReply) => void | Promise<void>): () => void
-  onQuestionReply(fn: (input: QuestionReply) => void | Promise<void>): () => void
-  onQuestionReject(fn: (input: QuestionReject) => void | Promise<void>): () => void
   onClose(fn: () => void): () => void
   event(next: FooterEvent): void
   append(commit: StreamCommit): void

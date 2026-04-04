@@ -600,6 +600,7 @@ type RunLocalInput = {
 }
 
 async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
+  const log = trace()
   const keybindsTask = resolveFooterKeybinds()
   const diffTask = resolveDiffStyle()
   const ctx = await input.boot()
@@ -664,6 +665,16 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
     theme,
     keybinds,
     diffStyle,
+    onPermissionReply: async (next) => {
+      log?.write("send.permission.reply", next)
+      await ctx.sdk.permission.reply(next)
+    },
+    onQuestionReply: async (next) => {
+      await ctx.sdk.question.reply(next)
+    },
+    onQuestionReject: async (next) => {
+      await ctx.sdk.question.reject(next)
+    },
     onCycleVariant: () => {
       if (!ctx.model || variants.length === 0) {
         return {

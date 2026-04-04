@@ -343,8 +343,7 @@ export function RunPermissionBody(props: {
   request: PermissionRequest
   theme: RunFooterTheme
   diffStyle?: RunDiffStyle
-  onReply?: (input: PermissionReply) => void | Promise<void>
-  onStatus: (text: string) => void
+  onReply: (input: PermissionReply) => void | Promise<void>
 }) {
   const dims = useTerminalDimensions()
   const [state, setState] = createSignal(createPermissionBodyState(props.request.id))
@@ -377,11 +376,6 @@ export function RunPermissionBody(props: {
   }
 
   const submit = async (next: PermissionReply) => {
-    if (!props.onReply) {
-      props.onStatus("permission queue unavailable")
-      return
-    }
-
     setState((prev) => ({
       ...prev,
       submitting: true,

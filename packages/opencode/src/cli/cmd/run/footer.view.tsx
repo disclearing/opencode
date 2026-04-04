@@ -40,9 +40,9 @@ type RunFooterViewProps = {
   history?: string[]
   agent: string
   onSubmit: (text: string) => boolean
-  onPermissionReply?: (input: PermissionReply) => void | Promise<void>
-  onQuestionReply?: (input: QuestionReply) => void | Promise<void>
-  onQuestionReject?: (input: QuestionReject) => void | Promise<void>
+  onPermissionReply: (input: PermissionReply) => void | Promise<void>
+  onQuestionReply: (input: QuestionReply) => void | Promise<void>
+  onQuestionReject: (input: QuestionReject) => void | Promise<void>
   onCycle: () => void
   onInterrupt: () => boolean
   onExitRequest?: () => boolean
@@ -163,7 +163,6 @@ export function RunFooterView(props: RunFooterViewProps) {
                   theme={theme()}
                   diffStyle={props.diffStyle}
                   onReply={props.onPermissionReply}
-                  onStatus={props.onStatus}
                 />
               </Match>
               <Match when={active().type === "question"}>
@@ -172,7 +171,6 @@ export function RunFooterView(props: RunFooterViewProps) {
                   theme={theme()}
                   onReply={props.onQuestionReply}
                   onReject={props.onQuestionReject}
-                  onStatus={props.onStatus}
                 />
               </Match>
             </Switch>
