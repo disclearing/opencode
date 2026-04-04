@@ -1,7 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import { StyledText, bg, fg, type KeyBinding } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
+import { Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import "opentui-spinner/solid"
 import { Keybind } from "../../../util/keybind"
 import { createColors, createFrames } from "../tui/ui/spinner"
@@ -205,46 +205,6 @@ function RunPromptBody(props: {
         item = next as Area
       }}
     />
-  )
-}
-
-function RunBodyShell(props: {
-  id: string
-  theme: () => RunFooterTheme
-  title: string
-  lines: string[]
-  hint: string
-}) {
-  return (
-    <box id={props.id} width="100%" height="100%" flexDirection="column" gap={1}>
-      <scrollbox
-        id={`${props.id}-scroll`}
-        width="100%"
-        height="100%"
-        verticalScrollbarOptions={{
-          trackOptions: {
-            backgroundColor: props.theme().surface,
-            foregroundColor: props.theme().line,
-          },
-        }}
-      >
-        <box width="100%" flexDirection="column" gap={1}>
-          <text id={`${props.id}-title`} fg={props.theme().highlight} wrapMode="word">
-            {props.title}
-          </text>
-          <For each={props.lines}>
-            {(line) => (
-              <text fg={props.theme().text} wrapMode="word">
-                {line}
-              </text>
-            )}
-          </For>
-        </box>
-      </scrollbox>
-      <text id={`${props.id}-hint`} fg={props.theme().muted} wrapMode="word">
-        {props.hint}
-      </text>
-    </box>
   )
 }
 
