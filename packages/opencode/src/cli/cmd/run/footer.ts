@@ -380,14 +380,26 @@ export class RunFooter implements FooterApi {
   }
 
   private handlePermissionReply = async (input: PermissionReply): Promise<void> => {
+    if (this.isClosed) {
+      return
+    }
+
     await this.options.onPermissionReply(input)
   }
 
   private handleQuestionReply = async (input: QuestionReply): Promise<void> => {
+    if (this.isClosed) {
+      return
+    }
+
     await this.options.onQuestionReply(input)
   }
 
   private handleQuestionReject = async (input: QuestionReject): Promise<void> => {
+    if (this.isClosed) {
+      return
+    }
+
     await this.options.onQuestionReject(input)
   }
 
