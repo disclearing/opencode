@@ -875,6 +875,7 @@ type TurnInput = {
   limits: Record<string, number>
   footer: FooterApi
   signal?: AbortSignal
+  data?: SessionData
 }
 
 export function formatUnknownError(error: unknown): string {
@@ -899,9 +900,9 @@ export function formatUnknownError(error: unknown): string {
   return "unknown error"
 }
 
-export async function runPromptTurn(input: TurnInput): Promise<void> {
+export async function runPromptTurn(input: TurnInput): Promise<SessionData> {
   if (input.signal?.aborted) {
-    return
+    return input.data ?? createSessionData()
   }
 
   const log = trace()
@@ -926,7 +927,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
   }
   const close = () => {
     // Pass undefined explicitly so TS accepts AsyncGenerator.return().
-    void events.stream.return(undefined).catch(() => { })
+    void events.stream.return(undefined).catch(() => {})
   }
   const offPermission = input.footer.onPermissionReply(async (payload) => {
     log?.write("send.permission.reply", payload)
@@ -938,7 +939,8 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
   const offReject = input.footer.onQuestionReject(async (payload) => {
     await input.sdk.question.reject(payload)
   })
-  let data = createSessionData()
+  let data = input.data ?? createSessionData()
+  data.announced = false
 
   const watch = (async () => {
     try {
@@ -1027,7 +1029,7 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       log?.write("turn.abort", {
         sessionID: input.sessionID,
       })
-      return
+      return data
     }
 
     if (!input.footer.isClosed && !data.announced) {
@@ -1056,15 +1058,15 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
       log?.write("turn.cancel", {
         sessionID: input.sessionID,
       })
-      void watch.catch(() => { })
-      return
+      void watch.catch(() => {})
+      return data
     }
 
     log?.write("send.prompt.error", {
       sessionID: input.sessionID,
       error: formatUnknownError(error),
     })
-    await watch.catch(() => { })
+    await watch.catch(() => {})
     throw error
   } finally {
     log?.write("turn.end", {
@@ -1077,4 +1079,6 @@ export async function runPromptTurn(input: TurnInput): Promise<void> {
     input.signal?.removeEventListener("abort", stop)
     abort.abort()
   }
+
+  return data
 }

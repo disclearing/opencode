@@ -7,7 +7,7 @@ import { Filesystem } from "../../../util/filesystem"
 import { Locale } from "../../../util/locale"
 import { RunFooter } from "./footer"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
-import { formatUnknownError, runPromptTurn } from "./stream"
+import { createSessionData, formatUnknownError, runPromptTurn } from "./stream"
 import { resolveRunTheme } from "./theme"
 import { trace } from "./trace"
 import type { FooterApi, FooterKeybinds, FooterPatch, RunDiffStyle, RunInput } from "./types"
@@ -690,12 +690,13 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
 
   try {
     let includeFiles = true
+    let state = createSessionData()
     await runPromptQueue({
       footer,
       initialInput: input.initialInput,
       run: async (prompt, signal) => {
         try {
-          await runPromptTurn({
+          state = await runPromptTurn({
             sdk: ctx.sdk,
             sessionID: ctx.sessionID,
             agent: ctx.agent,
@@ -708,6 +709,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
             limits,
             footer,
             signal,
+            data: state,
           })
           includeFiles = false
         } catch (error) {

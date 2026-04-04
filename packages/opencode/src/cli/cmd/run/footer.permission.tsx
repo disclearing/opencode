@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
-import { useTerminalDimensions } from "@opentui/solid"
-import { For, Match, Show, Switch, createEffect, createMemo } from "solid-js"
+import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
 import path from "path"
 import os from "os"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
@@ -341,20 +341,175 @@ function RejectField(props: {
 
 export function RunPermissionBody(props: {
   request: PermissionRequest
-  state: PermissionBodyState
   theme: RunFooterTheme
   diffStyle?: RunDiffStyle
-  onHover: (option: PermissionOption) => void
-  onSelect: (option: PermissionOption) => void
-  onMessage: (text: string) => void
-  onConfirmReject: () => void
-  onCancelReject: () => void
+  onReply?: (input: PermissionReply) => void | Promise<void>
+  onStatus: (text: string) => void
 }) {
   const dims = useTerminalDimensions()
+  const [state, setState] = createSignal(createPermissionBodyState(props.request.id))
   const info = createMemo(() => permissionInfo(props.request))
   const view = createMemo(() => toolDiffView(dims().width, props.diffStyle))
-  const opts = createMemo(() => permissionOptions(props.state.stage))
-  const busy = createMemo(() => props.state.submitting)
+  const opts = createMemo(() => permissionOptions(state().stage))
+  const busy = createMemo(() => state().submitting)
+
+  createEffect(() => {
+    const id = props.request.id
+    if (state().requestID === id) {
+      return
+    }
+
+    setState(createPermissionBodyState(id))
+  })
+
+  const shift = (dir: -1 | 1) => {
+    const list = permissionOptions(state().stage)
+    if (list.length === 0) {
+      return
+    }
+
+    const idx = Math.max(0, list.indexOf(state().selected))
+    const next = list[(idx + dir + list.length) % list.length]
+    setState((prev) => ({
+      ...prev,
+      selected: next,
+    }))
+  }
+
+  const submit = async (next: PermissionReply) => {
+    if (!props.onReply) {
+      props.onStatus("permission queue unavailable")
+      return
+    }
+
+    setState((prev) => ({
+      ...prev,
+      submitting: true,
+    }))
+
+    try {
+      await props.onReply(next)
+    } catch {
+      setState((prev) => ({
+        ...prev,
+        submitting: false,
+      }))
+    }
+  }
+
+  const run = (option: PermissionOption) => {
+    const cur = state()
+    if (cur.submitting) {
+      return
+    }
+
+    if (cur.stage === "permission") {
+      if (option === "always") {
+        setState((prev) => ({
+          ...prev,
+          stage: "always",
+          selected: "confirm",
+        }))
+        return
+      }
+
+      if (option === "reject") {
+        setState((prev) => ({
+          ...prev,
+          stage: "reject",
+          selected: "reject",
+        }))
+        return
+      }
+
+      void submit(permissionReply(props.request.id, "once"))
+      return
+    }
+
+    if (cur.stage !== "always") {
+      return
+    }
+
+    if (option === "cancel") {
+      setState((prev) => ({
+        ...prev,
+        stage: "permission",
+        selected: "always",
+      }))
+      return
+    }
+
+    void submit(permissionReply(props.request.id, "always"))
+  }
+
+  const reject = () => {
+    if (state().submitting) {
+      return
+    }
+
+    void submit(permissionReply(props.request.id, "reject", state().message))
+  }
+
+  const cancelReject = () => {
+    setState((prev) => ({
+      ...prev,
+      stage: "permission",
+      selected: "reject",
+    }))
+  }
+
+  useKeyboard((event) => {
+    const cur = state()
+    if (cur.stage === "reject") {
+      return
+    }
+
+    if (cur.submitting) {
+      if (["left", "right", "h", "l", "return", "escape"].includes(event.name)) {
+        event.preventDefault()
+      }
+      return
+    }
+
+    if (event.name === "left" || event.name === "h") {
+      shift(-1)
+      event.preventDefault()
+      return
+    }
+
+    if (event.name === "right" || event.name === "l") {
+      shift(1)
+      event.preventDefault()
+      return
+    }
+
+    if (event.name === "return") {
+      run(state().selected)
+      event.preventDefault()
+      return
+    }
+
+    if (event.name !== "escape") {
+      return
+    }
+
+    if (cur.stage === "always") {
+      setState((prev) => ({
+        ...prev,
+        stage: "permission",
+        selected: "always",
+      }))
+      event.preventDefault()
+      return
+    }
+
+    setState((prev) => ({
+      ...prev,
+      stage: "reject",
+      selected: "reject",
+    }))
+    event.preventDefault()
+  })
 
   return (
     <box id="run-direct-footer-permission-body" width="100%" height="100%" flexDirection="column" gap={1}>
@@ -363,13 +518,13 @@ export function RunPermissionBody(props: {
           <text fg={props.theme.highlight}>△</text>
           <text fg={props.theme.text}>
             <Switch>
-              <Match when={props.state.stage === "always"}>Always allow</Match>
-              <Match when={props.state.stage === "reject"}>Reject permission</Match>
+              <Match when={state().stage === "always"}>Always allow</Match>
+              <Match when={state().stage === "reject"}>Reject permission</Match>
               <Match when={true}>Permission required</Match>
             </Switch>
           </text>
         </box>
-        <Show when={props.state.stage === "permission"}>
+        <Show when={state().stage === "permission"}>
           <box flexDirection="row" gap={1} paddingLeft={2}>
             <text fg={props.theme.muted}>{info().icon}</text>
             <text fg={props.theme.text} wrapMode="word">
@@ -381,7 +536,7 @@ export function RunPermissionBody(props: {
 
       <box width="100%" flexGrow={1} flexShrink={1}>
         <Switch>
-          <Match when={props.state.stage === "permission"}>
+          <Match when={state().stage === "permission"}>
             <scrollbox
               width="100%"
               height="100%"
@@ -414,7 +569,7 @@ export function RunPermissionBody(props: {
               </box>
             </scrollbox>
           </Match>
-          <Match when={props.state.stage === "always"}>
+          <Match when={state().stage === "always"}>
             <scrollbox
               width="100%"
               height="100%"
@@ -430,16 +585,21 @@ export function RunPermissionBody(props: {
               </box>
             </scrollbox>
           </Match>
-          <Match when={props.state.stage === "reject"}>
+          <Match when={state().stage === "reject"}>
             <box width="100%" height="100%" flexDirection="column" gap={1}>
               <text fg={props.theme.muted}>Tell OpenCode what to do differently</text>
               <RejectField
                 theme={props.theme}
-                text={props.state.message}
+                text={state().message}
                 disabled={busy()}
-                onChange={props.onMessage}
-                onConfirm={props.onConfirmReject}
-                onCancel={props.onCancelReject}
+                onChange={(text) => {
+                  setState((prev) => ({
+                    ...prev,
+                    message: text,
+                  }))
+                }}
+                onConfirm={reject}
+                onCancel={cancelReject}
               />
             </box>
           </Match>
@@ -447,14 +607,26 @@ export function RunPermissionBody(props: {
       </box>
 
       <Switch>
-        <Match when={props.state.stage !== "reject"}>
+        <Match when={state().stage !== "reject"}>
           <box flexDirection="column" gap={1} flexShrink={0}>
-            {buttons(opts(), props.state.selected, props.theme, busy(), props.onHover, props.onSelect)}
+            {buttons(
+              opts(),
+              state().selected,
+              props.theme,
+              busy(),
+              (option) => {
+                setState((prev) => ({
+                  ...prev,
+                  selected: option,
+                }))
+              },
+              run,
+            )}
             <text fg={props.theme.muted} wrapMode="word">
               <Show
                 when={busy()}
                 fallback={
-                  props.state.stage === "always"
+                  state().stage === "always"
                     ? "⇆ select   enter confirm   esc cancel"
                     : "⇆ select   enter confirm   esc reject"
                 }
