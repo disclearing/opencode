@@ -67,18 +67,6 @@ export async function resolveModelInfo(sdk: RunInput["sdk"], model: RunInput["mo
   }
 }
 
-export async function resolveFirstPrompt(sdk: RunInput["sdk"], sessionID: string): Promise<boolean> {
-  try {
-    const response = await sdk.session.messages({
-      sessionID,
-      limit: 1,
-    })
-    return (response.data ?? []).length === 0
-  } catch {
-    return true
-  }
-}
-
 function promptHistory(messages: SessionMessages): string[] {
   const history: string[] = []
 

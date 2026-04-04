@@ -43,7 +43,7 @@ export type LifecycleInput = {
 
 export type Lifecycle = {
   footer: RunFooter
-  close(input: { showExit: () => Promise<boolean> }): Promise<void>
+  close(input: { showExit: boolean }): Promise<void>
 }
 
 function shutdown(renderer: CliRenderer): void {
@@ -89,8 +89,7 @@ function footerLabels(input: Pick<RunInput, "agent" | "model" | "variant">): Foo
   }
 }
 
-/** @internal Exported for testing */
-export function queueSplash(
+function queueSplash(
   renderer: Pick<CliRenderer, "writeToScrollback" | "requestRender">,
   state: SplashState,
   phase: keyof SplashState,
@@ -171,7 +170,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
   process.on("SIGINT", sigint)
 
   let closed = false
-  const close = async (next: { showExit: () => Promise<boolean> }) => {
+  const close = async (next: { showExit: boolean }) => {
     if (closed) {
       return
     }
@@ -180,7 +179,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     process.off("SIGINT", sigint)
 
     try {
-      const show = renderer.isDestroyed ? false : await next.showExit()
+      const show = renderer.isDestroyed ? false : next.showExit
       if (!renderer.isDestroyed && show) {
         queueSplash(
           renderer,

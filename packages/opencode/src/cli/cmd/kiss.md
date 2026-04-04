@@ -301,7 +301,7 @@ For items that mention fullscreen parity, do it in two phases:
 
 ### Edge Features And Test Surface
 
-- [ ] 20. Keep trace and splash at the edge.
+- [x] 20. Keep trace and splash at the edge.
       Files: `packages/opencode/src/cli/cmd/run/trace.ts`, `packages/opencode/src/cli/cmd/run/splash.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`, `packages/opencode/src/cli/logo.ts`
       Why: tracing and splash are fine, but they should stay small and non-invasive.
       Target: no business logic or state choreography should depend on them.

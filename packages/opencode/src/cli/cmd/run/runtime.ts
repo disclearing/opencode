@@ -1,12 +1,6 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { createRunDemo } from "./demo"
-import {
-  resolveDiffStyle,
-  resolveFirstPrompt,
-  resolveFooterKeybinds,
-  resolveModelInfo,
-  resolveSessionInfo,
-} from "./runtime.boot"
+import { resolveDiffStyle, resolveFooterKeybinds, resolveModelInfo, resolveSessionInfo } from "./runtime.boot"
 import { createRuntimeLifecycle } from "./runtime.lifecycle"
 import { runPromptQueue } from "./runtime.queue"
 import { createSessionTransport, formatUnknownError } from "./stream.transport"
@@ -16,9 +10,6 @@ import type { RunInput } from "./types"
 
 /** @internal Exported for testing */
 export { pickVariant, resolveVariant } from "./variant.shared"
-
-/** @internal Exported for testing */
-export { queueSplash } from "./runtime.lifecycle"
 
 /** @internal Exported for testing */
 export { runPromptQueue } from "./runtime.queue"
@@ -61,6 +52,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   let variants: string[] = []
   let limits: Record<string, number> = {}
   let aborting = false
+  let shown = false
   let demo: ReturnType<typeof createRunDemo> | undefined
 
   const [keybinds, diffStyle, session, savedVariant] = await Promise.all([
@@ -69,6 +61,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
     sessionTask,
     savedTask,
   ])
+  shown = !session.first
   let activeVariant = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
 
   const shell = await createRuntimeLifecycle({
@@ -178,6 +171,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
       thinking: input.thinking,
       limits: () => limits,
       footer,
+      trace: log,
     })
 
     try {
@@ -188,6 +182,10 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
       await runPromptQueue({
         footer,
         initialInput: input.initialInput,
+        trace: log,
+        onPrompt: () => {
+          shown = true
+        },
         run: async (prompt, signal) => {
           if (demo && (await demo.prompt(prompt, signal))) {
             return
@@ -217,7 +215,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
     }
   } finally {
     await shell.close({
-      showExit: async () => !(await resolveFirstPrompt(ctx.sdk, ctx.sessionID)),
+      showExit: shown,
     })
   }
 }

@@ -1,16 +1,20 @@
 import { Locale } from "../../../util/locale"
 import { isExitCommand } from "./prompt.shared"
-import { trace } from "./trace"
 import type { FooterApi, FooterEvent } from "./types"
+
+type Trace = {
+  write(type: string, data?: unknown): void
+}
 
 export type QueueInput = {
   footer: FooterApi
   initialInput?: string
+  trace?: Trace
+  onPrompt?: () => void
   run: (prompt: string, signal: AbortSignal) => Promise<void>
 }
 
 export async function runPromptQueue(input: QueueInput): Promise<void> {
-  const log = trace()
   const q: string[] = []
   let turn = 0
   let busy = false
@@ -44,7 +48,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   }
 
   const emit = (next: FooterEvent, row: Record<string, unknown>) => {
-    log?.write("ui.patch", row)
+    input.trace?.write("ui.patch", row)
     input.footer.event(next)
   }
 
@@ -85,7 +89,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
           const text = turn === 0 ? prompt : `\n${prompt}`
           turn += 1
           const commit = { kind: "user", text, phase: "start", source: "system" } as const
-          log?.write("ui.commit", commit)
+          input.trace?.write("ui.commit", commit)
           input.footer.append(commit)
           const out = await Promise.race([task, until.then(() => ({ type: "closed" as const }))])
           if (out.type === "closed") {
@@ -140,6 +144,7 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
       return
     }
 
+    input.onPrompt?.()
     q.push(prompt)
     emit(
       {

@@ -3,7 +3,6 @@ import path from "path"
 import { Global } from "../../../global"
 
 export type Trace = {
-  path: string
   write(type: string, data?: unknown): void
 }
 
@@ -61,7 +60,6 @@ export function trace() {
     }) + "\n",
   )
   state = {
-    path: target,
     write(type: string, data?: unknown) {
       fs.appendFileSync(
         target,

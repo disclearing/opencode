@@ -1,7 +1,10 @@
 import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
 import { createSessionData, flushInterrupted, reduceSessionData, type SessionData } from "./stream"
-import { trace } from "./trace"
 import type { FooterApi, RunFilePart, RunInput, StreamCommit } from "./types"
+
+type Trace = {
+  write(type: string, data?: unknown): void
+}
 
 type StreamInput = {
   sdk: OpencodeClient
@@ -9,6 +12,7 @@ type StreamInput = {
   thinking: boolean
   limits: () => Record<string, number>
   footer: FooterApi
+  trace?: Trace
   signal?: AbortSignal
 }
 
@@ -102,7 +106,6 @@ export function formatUnknownError(error: unknown): string {
 }
 
 export async function createSessionTransport(input: StreamInput): Promise<SessionTransport> {
-  const log = trace()
   const abort = new AbortController()
   const halt = () => {
     abort.abort()
@@ -112,7 +115,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
   const events = await input.sdk.event.subscribe(undefined, {
     signal: abort.signal,
   })
-  log?.write("recv.subscribe", {
+  input.trace?.write("recv.subscribe", {
     sessionID: input.sessionID,
   })
 
@@ -140,7 +143,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
 
   const write = (commits: StreamCommit[]) => {
     for (const commit of commits) {
-      log?.write("ui.commit", commit)
+      input.trace?.write("ui.commit", commit)
       input.footer.append(commit)
     }
   }
@@ -168,7 +171,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
     const commits: StreamCommit[] = []
     flushInterrupted(data, commits)
     write(commits)
-    log?.write(type, {
+    input.trace?.write(type, {
       sessionID: input.sessionID,
     })
   }
@@ -181,7 +184,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         }
 
         const event = item as Event
-        log?.write("recv.event", event)
+        input.trace?.write("recv.event", event)
         const next = reduceSessionData({
           data,
           event,
@@ -192,7 +195,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         data = next.data
 
         if (next.commits.length > 0 || next.footer?.patch || next.footer?.view) {
-          log?.write("reduce.output", {
+          input.trace?.write("reduce.output", {
             commits: next.commits,
             footer: next.footer,
           })
@@ -205,7 +208,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
             typeof next.footer.patch.status === "string" && next.footer.patch.phase === undefined
               ? { phase: "running" as const, ...next.footer.patch }
               : next.footer.patch
-          log?.write("ui.patch", patch)
+          input.trace?.write("ui.patch", patch)
           input.footer.event({
             type: "stream.patch",
             patch,
@@ -213,7 +216,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         }
 
         if (next.footer?.view) {
-          log?.write("ui.patch", {
+          input.trace?.write("ui.patch", {
             view: next.footer.view,
           })
           input.footer.event({
@@ -268,11 +271,11 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         variant: next.variant,
         parts: [...(next.includeFiles ? next.files : []), { type: "text" as const, text: next.prompt }],
       }
-      log?.write("send.prompt", req)
+      input.trace?.write("send.prompt", req)
       await input.sdk.session.prompt(req, {
         signal: turn.signal,
       })
-      log?.write("send.prompt.ok", {
+      input.trace?.write("send.prompt.ok", {
         sessionID: input.sessionID,
       })
 
@@ -287,7 +290,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
       }
 
       if (!input.footer.isClosed && !data.announced) {
-        log?.write("ui.patch", {
+        input.trace?.write("ui.patch", {
           phase: "running",
           status: "waiting for assistant",
         })
@@ -328,13 +331,13 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         throw error
       }
 
-      log?.write("send.prompt.error", {
+      input.trace?.write("send.prompt.error", {
         sessionID: input.sessionID,
         error: formatUnknownError(error),
       })
       throw error
     } finally {
-      log?.write("turn.end", {
+      input.trace?.write("turn.end", {
         sessionID: input.sessionID,
       })
       next.signal?.removeEventListener("abort", stop)

@@ -9,7 +9,7 @@ import {
   type ScrollbackWriter,
 } from "@opentui/core"
 import { Locale } from "../../../util/locale"
-import { logo, logoCells } from "../../logo"
+import { logo } from "../../logo"
 import type { RunEntryTheme } from "./theme"
 
 export const SPLASH_TITLE_LIMIT = 50
@@ -31,7 +31,36 @@ export type SplashMeta = {
   session_id: string
 }
 
+type Cell = {
+  char: string
+  mark: "text" | "full" | "mix" | "top"
+}
+
 let id = 0
+
+function cells(line: string): Cell[] {
+  const list: Cell[] = []
+  for (const char of line) {
+    if (char === "_") {
+      list.push({ char: " ", mark: "full" })
+      continue
+    }
+
+    if (char === "^") {
+      list.push({ char: "▀", mark: "mix" })
+      continue
+    }
+
+    if (char === "~") {
+      list.push({ char: "▀", mark: "top" })
+      continue
+    }
+
+    list.push({ char, mark: "text" })
+  }
+
+  return list
+}
 
 function title(text: string | undefined): string {
   if (!text) {
@@ -127,7 +156,7 @@ function draw(
   },
 ) {
   let x = input.left
-  for (const cell of logoCells(row)) {
+  for (const cell of cells(row)) {
     if (cell.mark === "full") {
       push(lines, x, input.top, cell.char, input.fg, input.shadow, input.attrs)
       x += 1
