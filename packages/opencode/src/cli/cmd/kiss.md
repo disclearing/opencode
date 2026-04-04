@@ -118,9 +118,19 @@ abilities from `direct-render-plan.md`.
   even if the current branch temporarily deleted them
 
 When a fix item says to deduplicate with fullscreen, read that as preserving one
-behavior model or shared pure helpers where useful. Do not read it as permission
-to drop direct-mode footer bodies, drop snapshot builders, or force shared
-fullscreen/direct components right now.
+behavior model via shared pure helpers where useful. Do not read it as
+permission to drop direct-mode footer bodies, drop snapshot builders, or force
+shared fullscreen/direct components right now.
+
+For this branch landing, keep dedupe work scoped to
+`packages/opencode/src/cli/cmd/run/**`. Do not require edits in
+`packages/opencode/src/cli/cmd/tui/**` to complete the checklist.
+
+For items that mention fullscreen parity, do it in two phases:
+
+1. extract shared pure logic into a run-adjacent shared module and wire direct
+   mode to it now
+2. adopt the same shared module from fullscreen TUI in a follow-up branch
 
 ## Fix List
 
@@ -220,31 +230,46 @@ fullscreen/direct components right now.
      Target: the runtime or controller should own one direct reply API and the UI
      should call that directly.
 
-- [ ] 10. Deduplicate permission logic with fullscreen.
-      Files: `packages/opencode/src/cli/cmd/run/footer.permission.tsx`, `packages/opencode/src/cli/cmd/tui/routes/session/permission.tsx`
+- [x] 10. Deduplicate permission logic with fullscreen.
+      Files (this branch): `packages/opencode/src/cli/cmd/run/footer.permission.tsx`,
+      `packages/opencode/src/cli/cmd/run/permission.shared.ts` (new)
+      Follow-up adoption: `packages/opencode/src/cli/cmd/tui/routes/session/permission.tsx`
       Why: both files implement the same permission stages, path formatting, diff
       rendering decisions, and per-tool copy.
-      Target: share the pure state and formatting logic or wrap the fullscreen
-      behavior instead of maintaining two copies.
+      Target: extract one pure permission state/formatting helper and use it in
+      direct mode now; wire fullscreen to that helper later.
 
-- [ ] 11. Deduplicate question logic with fullscreen.
-      Files: `packages/opencode/src/cli/cmd/run/footer.question.tsx`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/tui/routes/session/question.tsx`
+- [x] 11. Deduplicate question logic with fullscreen.
+      Files (this branch): `packages/opencode/src/cli/cmd/run/footer.question.tsx`,
+      `packages/opencode/src/cli/cmd/run/footer.view.tsx`,
+      `packages/opencode/src/cli/cmd/run/question.shared.ts` (new)
+      Follow-up adoption: `packages/opencode/src/cli/cmd/tui/routes/session/question.tsx`
       Why: both paths implement single-vs-multi select, tabbing, custom answer
       editing, confirm, and reject flows.
-      Target: one question controller, two shells at most.
+      Target: extract one pure question controller and use it in direct mode now;
+      keep two shells and migrate fullscreen to the same controller later.
 
-- [ ] 12. Deduplicate prompt history and keybind behavior.
-      Files: `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/runtime.ts`, `packages/opencode/src/cli/cmd/tui/component/prompt/history.tsx`, `packages/opencode/src/cli/cmd/tui/context/keybind.tsx`, `packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts`
+- [x] 12. Deduplicate prompt history and keybind behavior.
+      Files (this branch): `packages/opencode/src/cli/cmd/run/footer.prompt.tsx`,
+      `packages/opencode/src/cli/cmd/run/footer.view.tsx`,
+      `packages/opencode/src/cli/cmd/run/runtime.ts`,
+      `packages/opencode/src/cli/cmd/run/prompt.shared.ts` (new)
+      Follow-up adoption: `packages/opencode/src/cli/cmd/tui/component/prompt/history.tsx`,
+      `packages/opencode/src/cli/cmd/tui/context/keybind.tsx`,
+      `packages/opencode/src/cli/cmd/tui/component/textarea-keybindings.ts`
       Why: direct mode reimplements history navigation, submit and newline bindings,
       leader handling, and printable binding formatting.
-      Target: reuse fullscreen prompt and keybind primitives or extract one shared
-      pure helper layer.
+      Target: extract one shared pure prompt/keybind helper layer in run now,
+      then switch fullscreen to it in follow-up.
 
-- [ ] 13. Deduplicate model and variant persistence.
-      Files: `packages/opencode/src/cli/cmd/run/runtime.ts`, `packages/opencode/src/cli/cmd/tui/context/local.tsx`
+- [x] 13. Deduplicate model and variant persistence.
+      Files (this branch): `packages/opencode/src/cli/cmd/run/runtime.ts`,
+      `packages/opencode/src/cli/cmd/run/variant.shared.ts` (new)
+      Follow-up adoption: `packages/opencode/src/cli/cmd/tui/context/local.tsx`
       Why: direct mode reimplements model listing, variant cycling, saved variant
       resolution, and persistence.
-      Target: one small shared variant module or one existing owner.
+      Target: move variant persistence logic into one shared module and use it in
+      direct mode now; migrate fullscreen to that module later.
 
 ### Rendering And Shared Presentation
 
@@ -264,7 +289,12 @@ fullscreen/direct components right now.
       and helpers out.
 
 - [ ] 19. Remove small repeated helpers and make one shared home for them.
-      Files: `packages/opencode/src/cli/cmd/run.ts`, `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.permission.tsx`, `packages/opencode/src/cli/cmd/tui/routes/session/permission.tsx`
+      Files (this branch): `packages/opencode/src/cli/cmd/run.ts`,
+      `packages/opencode/src/cli/cmd/run/footer.ts`,
+      `packages/opencode/src/cli/cmd/run/footer.view.tsx`,
+      `packages/opencode/src/cli/cmd/run/footer.permission.tsx`,
+      `packages/opencode/src/cli/cmd/run/shared/*` (new)
+      Follow-up adoption: `packages/opencode/src/cli/cmd/tui/routes/session/permission.tsx`
       Why: `normalizePath()`, `printableBinding()`, exit-command parsing, filetype
       mapping, and diff-view selection are duplicated.
       Target: one pure helper module per concern.

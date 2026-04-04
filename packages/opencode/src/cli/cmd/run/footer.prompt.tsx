@@ -2,7 +2,15 @@
 import { StyledText, bg, fg, type KeyBinding } from "@opentui/core"
 import { useKeyboard } from "@opentui/solid"
 import { createEffect, createMemo, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
-import { Keybind } from "../../../util/keybind"
+import {
+  createPromptHistory,
+  movePromptHistory,
+  promptCycle,
+  promptHit,
+  promptInfo,
+  promptKeys,
+  pushPromptHistory,
+} from "./prompt.shared"
 import type { FooterKeybinds, FooterState } from "./types"
 import type { RunFooterTheme } from "./theme"
 
@@ -16,12 +24,6 @@ export const HINT_BREAKPOINTS = {
   newline: 66,
   history: 80,
   variant: 95,
-}
-
-type History = {
-  items: string[]
-  index: number | null
-  draft: string
 }
 
 type Area = {
@@ -80,56 +82,6 @@ function isExit(input: string): boolean {
   return text === "/exit" || text === "/quit"
 }
 
-function mapInputBindings(binding: string, action: "submit" | "newline"): KeyBinding[] {
-  return Keybind.parse(binding).map((item) => ({
-    name: item.name,
-    ctrl: item.ctrl || undefined,
-    meta: item.meta || undefined,
-    shift: item.shift || undefined,
-    super: item.super || undefined,
-    action,
-  }))
-}
-
-function textareaBindings(keybinds: FooterKeybinds): KeyBinding[] {
-  return [
-    { name: "return", action: "submit" },
-    { name: "return", meta: true, action: "newline" },
-    ...mapInputBindings(keybinds.inputSubmit, "submit"),
-    ...mapInputBindings(keybinds.inputNewline, "newline"),
-  ]
-}
-
-export function printableBinding(binding: string, leader: string): string {
-  const first = Keybind.parse(binding).at(0)
-  if (!first) {
-    return ""
-  }
-
-  let text = Keybind.toString(first)
-  const lead = Keybind.parse(leader).at(0)
-  if (lead) {
-    text = text.replace("<leader>", Keybind.toString(lead))
-  }
-
-  return text.replace(/escape/g, "esc")
-}
-
-function toInfo(event: Key, leader: boolean): Keybind.Info {
-  return {
-    name: event.name === " " ? "space" : event.name,
-    ctrl: !!event.ctrl,
-    meta: !!event.meta,
-    shift: !!event.shift,
-    super: !!event.super,
-    leader,
-  }
-}
-
-function hit(bindings: Keybind.Info[], event: Keybind.Info): boolean {
-  return bindings.some((item) => Keybind.match(item, event))
-}
-
 function clamp(rows: number): number {
   return Math.max(TEXTAREA_MIN_ROWS, Math.min(TEXTAREA_MAX_ROWS, rows))
 }
@@ -142,6 +94,8 @@ export function hintFlags(width: number) {
     variant: width >= HINT_BREAKPOINTS.variant,
   }
 }
+
+export { printableBinding } from "./prompt.shared"
 
 export function RunPromptBody(props: {
   theme: () => RunFooterTheme
@@ -188,12 +142,8 @@ export function RunPromptBody(props: {
 }
 
 export function createPromptState(input: PromptInput): PromptState {
-  const leaders = createMemo(() => Keybind.parse(input.keybinds.leader))
-  const cycles = createMemo(() => Keybind.parse(input.keybinds.variantCycle))
-  const interrupts = createMemo(() => Keybind.parse(input.keybinds.interrupt))
-  const previous = createMemo(() => Keybind.parse(input.keybinds.historyPrevious))
-  const next = createMemo(() => Keybind.parse(input.keybinds.historyNext))
-  const bindings = createMemo(() => textareaBindings(input.keybinds))
+  const keys = createMemo(() => promptKeys(input.keybinds))
+  const bindings = createMemo(() => keys().bindings)
   const [draft, setDraft] = createSignal("")
   const placeholder = createMemo(() => {
     if (!input.state().first) {
@@ -205,15 +155,7 @@ export function createPromptState(input: PromptInput): PromptState {
     ])
   })
 
-  const history: History = {
-    items: (input.history ?? [])
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0)
-      .filter((item, idx, all) => idx === 0 || item !== all[idx - 1])
-      .slice(-200),
-    index: null,
-    draft: "",
-  }
+  let history = createPromptHistory(input.history)
 
   let area: Area | undefined
   let leader = false
@@ -298,96 +240,44 @@ export function createPromptState(input: PromptInput): PromptState {
   }
 
   const push = (text: string) => {
-    if (!text) {
-      return
-    }
-
-    if (history.items[history.items.length - 1] === text) {
-      history.index = null
-      history.draft = ""
-      return
-    }
-
-    history.items.push(text)
-    if (history.items.length > 200) {
-      history.items.shift()
-    }
-
-    history.index = null
-    history.draft = ""
+    history = pushPromptHistory(history, text)
   }
 
   const move = (dir: -1 | 1, event: Key) => {
-    if (!area || history.items.length === 0) {
+    if (!area || area.isDestroyed) {
       return
     }
 
-    if (dir === -1 && area.cursorOffset !== 0) {
+    const next = movePromptHistory(history, dir, area.plainText, area.cursorOffset)
+    if (!next.apply || next.text === undefined || next.cursor === undefined) {
       return
     }
 
-    if (dir === 1 && area.cursorOffset !== area.plainText.length) {
-      return
-    }
-
-    if (history.index === null) {
-      if (dir === 1) {
-        return
-      }
-
-      history.draft = area.plainText
-      history.index = history.items.length - 1
-    } else {
-      const idx = history.index + dir
-      if (idx < 0) {
-        return
-      }
-
-      if (idx >= history.items.length) {
-        history.index = null
-        area.setText(history.draft)
-        area.cursorOffset = area.plainText.length
-        event.preventDefault()
-        syncRows()
-        return
-      }
-
-      history.index = idx
-    }
-
-    area.setText(history.items[history.index])
-    area.cursorOffset = dir === -1 ? 0 : area.plainText.length
+    history = next.state
+    area.setText(next.text)
+    area.cursorOffset = next.cursor
     event.preventDefault()
     syncRows()
   }
 
   const cycle = (event: Key): boolean => {
-    const plain = toInfo(event, false)
-
-    if (!leader && hit(leaders(), plain)) {
-      arm()
-      event.preventDefault()
-      return true
-    }
-
-    if (leader) {
-      const key = toInfo(event, true)
-      const ok = hit(cycles(), key)
-      clear()
-      event.preventDefault()
-
-      if (ok) {
-        input.onCycle()
-      }
-
-      return true
-    }
-
-    if (!hit(cycles(), plain)) {
+    const next = promptCycle(leader, promptInfo(event), keys().leaders, keys().cycles)
+    if (!next.consume) {
       return false
     }
 
-    input.onCycle()
+    if (next.clear) {
+      clear()
+    }
+
+    if (next.arm) {
+      arm()
+    }
+
+    if (next.cycle) {
+      input.onCycle()
+    }
+
     event.preventDefault()
     return true
   }
@@ -401,7 +291,8 @@ export function createPromptState(input: PromptInput): PromptState {
       return
     }
 
-    if (hit(interrupts(), toInfo(event, false))) {
+    const key = promptInfo(event)
+    if (promptHit(keys().interrupts, key)) {
       if (input.onInterrupt()) {
         event.preventDefault()
         return
@@ -412,9 +303,8 @@ export function createPromptState(input: PromptInput): PromptState {
       return
     }
 
-    const key = toInfo(event, false)
-    const up = hit(previous(), key)
-    const down = hit(next(), key)
+    const up = promptHit(keys().previous, key)
+    const down = promptHit(keys().next, key)
     if (!up && !down) {
       return
     }

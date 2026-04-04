@@ -1,21 +1,29 @@
-import path from "path"
 import { createCliRenderer, type CliRenderer, type ScrollbackWriter } from "@opentui/core"
 import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { TuiConfig } from "../../../config/tui"
-import { Global } from "../../../global"
-import { Filesystem } from "../../../util/filesystem"
 import { Locale } from "../../../util/locale"
+import { createRunDemo } from "./demo"
 import { RunFooter } from "./footer"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { createSessionTransport, formatUnknownError } from "./stream.transport"
 import { resolveRunTheme } from "./theme"
 import { trace } from "./trace"
+import {
+  cycleVariant,
+  formatModelLabel,
+  pickVariant,
+  resolveSavedVariant,
+  resolveVariant,
+  saveVariant,
+} from "./variant.shared"
 import type { FooterApi, FooterEvent, FooterKeybinds, RunDiffStyle, RunInput } from "./types"
 
 const FOOTER_HEIGHT = 7
 const HISTORY_LIMIT = 200
-const MODEL_FILE = path.join(Global.Path.state, "model.json")
 const DEFAULT_TITLE = /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+/** @internal Exported for testing */
+export { pickVariant, resolveVariant } from "./variant.shared"
 
 const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
@@ -45,28 +53,6 @@ function shutdown(renderer: CliRenderer): void {
   }
 }
 
-function formatModelLabel(model: NonNullable<RunInput["model"]>, variant: string | undefined): string {
-  const variantLabel = variant ? ` · ${variant}` : ""
-  return `${model.modelID} · ${model.providerID}${variantLabel}`
-}
-
-function cycleVariant(current: string | undefined, variants: string[]): string | undefined {
-  if (variants.length === 0) {
-    return undefined
-  }
-
-  if (!current) {
-    return variants[0]
-  }
-
-  const index = variants.indexOf(current)
-  if (index === -1 || index === variants.length - 1) {
-    return undefined
-  }
-
-  return variants[index + 1]
-}
-
 type ModelInfo = {
   variants: string[]
   limits: Record<string, number>
@@ -80,16 +66,8 @@ type SessionInfo = {
 
 type SessionMessages = NonNullable<Awaited<ReturnType<RunInput["sdk"]["session"]["messages"]>>["data"]>
 
-type ModelState = {
-  variant?: Record<string, string | undefined>
-}
-
 function modelKey(provider: string, model: string): string {
   return `${provider}/${model}`
-}
-
-function variantKey(model: NonNullable<RunInput["model"]>): string {
-  return modelKey(model.providerID, model.modelID)
 }
 
 async function resolveModelInfo(sdk: RunInput["sdk"], model: RunInput["model"]): Promise<ModelInfo> {
@@ -164,60 +142,6 @@ function promptHistory(messages: SessionMessages): string[] {
   return history.slice(-HISTORY_LIMIT)
 }
 
-/** @internal Exported for testing */
-export function pickVariant(model: RunInput["model"], messages: SessionMessages): string | undefined {
-  if (!model || !messages || messages.length === 0) {
-    return undefined
-  }
-
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const info = messages[index]?.info
-    if (!info || info.role !== "user") {
-      continue
-    }
-
-    if (info.model.providerID !== model.providerID || info.model.modelID !== model.modelID) {
-      continue
-    }
-
-    return info.variant
-  }
-
-  return undefined
-}
-
-function fitVariant(value: string | undefined, variants: string[]): string | undefined {
-  if (!value) {
-    return undefined
-  }
-
-  if (variants.length === 0 || variants.includes(value)) {
-    return value
-  }
-
-  return undefined
-}
-
-/** @internal Exported for testing */
-export function resolveVariant(
-  input: string | undefined,
-  session: string | undefined,
-  saved: string | undefined,
-  variants: string[],
-): string | undefined {
-  if (input !== undefined) {
-    return input
-  }
-
-  const fallback = fitVariant(saved, variants)
-  const current = fitVariant(session, variants)
-  if (current !== undefined) {
-    return current
-  }
-
-  return fallback
-}
-
 async function resolveSessionInfo(
   sdk: RunInput["sdk"],
   sessionID: string,
@@ -241,45 +165,6 @@ async function resolveSessionInfo(
       variant: undefined,
     }
   }
-}
-
-async function resolveSavedVariant(model: RunInput["model"]): Promise<string | undefined> {
-  if (!model) {
-    return undefined
-  }
-
-  try {
-    const state = await Filesystem.readJson<ModelState>(MODEL_FILE)
-    return state.variant?.[variantKey(model)]
-  } catch {
-    return undefined
-  }
-}
-
-function saveVariant(model: RunInput["model"], variant: string | undefined): void {
-  if (!model) {
-    return
-  }
-
-  void (async () => {
-    const state = await Filesystem.readJson<ModelState>(MODEL_FILE).catch(() => ({}) as ModelState)
-    const map = {
-      ...(state.variant ?? {}),
-    }
-    const key = variantKey(model)
-    if (variant) {
-      map[key] = variant
-    }
-
-    if (!variant) {
-      delete map[key]
-    }
-
-    await Filesystem.writeJson(MODEL_FILE, {
-      ...state,
-      variant: map,
-    })
-  })().catch(() => {})
 }
 
 async function resolveFooterKeybinds(): Promise<FooterKeybinds> {
@@ -584,6 +469,8 @@ type RunRuntimeInput = {
   files: RunInput["files"]
   initialInput?: string
   thinking: boolean
+  demo?: RunInput["demo"]
+  demoText?: RunInput["demoText"]
 }
 
 type RunLocalInput = {
@@ -597,6 +484,8 @@ type RunLocalInput = {
   files: RunInput["files"]
   initialInput?: string
   thinking: boolean
+  demo?: RunInput["demo"]
+  demoText?: RunInput["demoText"]
 }
 
 async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
@@ -615,6 +504,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   let limits: Record<string, number> = {}
   let activeVariant: string | undefined
   let aborting = false
+  let demo: ReturnType<typeof createRunDemo> | undefined
 
   const renderer = await createCliRenderer({
     targetFps: 30,
@@ -666,13 +556,25 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
     keybinds,
     diffStyle,
     onPermissionReply: async (next) => {
+      if (demo?.permission(next)) {
+        return
+      }
+
       log?.write("send.permission.reply", next)
       await ctx.sdk.permission.reply(next)
     },
     onQuestionReply: async (next) => {
+      if (demo?.questionReply(next)) {
+        return
+      }
+
       await ctx.sdk.question.reply(next)
     },
     onQuestionReject: async (next) => {
+      if (demo?.questionReject(next)) {
+        return
+      }
+
       await ctx.sdk.question.reject(next)
     },
     onCycleVariant: () => {
@@ -705,6 +607,17 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
         })
     },
   })
+
+  if (input.demo) {
+    demo = createRunDemo({
+      mode: input.demo,
+      text: input.demoText,
+      footer,
+      sessionID: ctx.sessionID,
+      thinking: input.thinking,
+      limits: () => limits,
+    })
+  }
 
   if (input.afterPaint) {
     void Promise.resolve(input.afterPaint(ctx)).catch(() => {})
@@ -746,10 +659,18 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
     })
 
     try {
+      if (demo) {
+        await demo.start()
+      }
+
       await runPromptQueue({
         footer,
         initialInput: input.initialInput,
         run: async (prompt, signal) => {
+          if (demo && (await demo.prompt(prompt, signal))) {
+            return
+          }
+
           try {
             await stream.runPromptTurn({
               agent: ctx.agent,
@@ -808,6 +729,8 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
     files: input.files,
     initialInput: input.initialInput,
     thinking: input.thinking,
+    demo: input.demo,
+    demoText: input.demoText,
     afterPaint: (ctx) => input.share(ctx.sdk, ctx.sessionID),
     boot: async () => {
       const agent = await input.resolveAgent()
@@ -833,6 +756,8 @@ export async function runInteractiveMode(input: RunInput): Promise<void> {
     files: input.files,
     initialInput: input.initialInput,
     thinking: input.thinking,
+    demo: input.demo,
+    demoText: input.demoText,
     boot: async () => ({
       sdk: input.sdk,
       sessionID: input.sessionID,

@@ -1,8 +1,8 @@
 import { CliRenderEvents, type CliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
-import { Keybind } from "../../../util/keybind"
 import { TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.prompt"
+import { printableBinding } from "./prompt.shared"
 import { RunFooterView } from "./footer.view"
 import { entryWriter, normalizeEntry, spacerWriter } from "./scrollback"
 import type { RunTheme } from "./theme"
@@ -83,7 +83,7 @@ export class RunFooter implements FooterApi {
     this.view = view
     this.setView = setView
     this.base = Math.max(1, renderer.footerHeight - TEXTAREA_MIN_ROWS)
-    this.interruptHint = this.printableBinding(options.keybinds.interrupt, options.keybinds.leader) || "esc"
+    this.interruptHint = printableBinding(options.keybinds.interrupt, options.keybinds.leader) || "esc"
 
     this.renderer.on(CliRenderEvents.DESTROY, this.handleDestroy)
 
@@ -503,23 +503,6 @@ export class RunFooter implements FooterApi {
     this.close()
     this.options.onExit?.()
     return true
-  }
-
-  private printableBinding(binding: string, leader: string): string {
-    const first = Keybind.parse(binding).at(0)
-    if (!first) {
-      return ""
-    }
-
-    let text = Keybind.toString(first)
-    const lead = Keybind.parse(leader).at(0)
-    if (lead) {
-      text = text.replace("<leader>", Keybind.toString(lead))
-    }
-
-    text = text.replace(/escape/g, "esc")
-
-    return text
   }
 
   private handleDestroy = (): void => {

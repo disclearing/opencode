@@ -320,6 +320,15 @@ export const RunCommand = cmd({
         describe: "run in direct interactive split-footer mode",
         default: false,
       })
+      .option("demo", {
+        type: "string",
+        choices: ["on", "permission", "question", "mix", "text"],
+        describe: "enable direct interactive demo slash commands",
+      })
+      .option("demo-text", {
+        type: "string",
+        describe: "text used with --demo text",
+      })
   },
   handler: async (args) => {
     const rawMessage = [...args.message, ...(args["--"] || [])].join(" ")
@@ -331,6 +340,16 @@ export const RunCommand = cmd({
 
     if (args.interactive && args.command) {
       UI.error("--interactive cannot be used with --command")
+      process.exit(1)
+    }
+
+    if (args.demo && !args.interactive) {
+      UI.error("--demo requires --interactive")
+      process.exit(1)
+    }
+
+    if (args.demoText && args.demo !== "text") {
+      UI.error("--demo-text requires --demo text")
       process.exit(1)
     }
 
@@ -787,6 +806,8 @@ export const RunCommand = cmd({
         files,
         initialInput: rawMessage.trim().length > 0 ? rawMessage : undefined,
         thinking,
+        demo: args.demo,
+        demoText: args.demoText,
       })
       return
     }
@@ -809,6 +830,8 @@ export const RunCommand = cmd({
         files,
         initialInput: rawMessage.trim().length > 0 ? rawMessage : undefined,
         thinking,
+        demo: args.demo,
+        demoText: args.demoText,
       })
     }
 

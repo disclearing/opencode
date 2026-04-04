@@ -1,243 +1,32 @@
 /** @jsxImportSource @opentui/solid */
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js"
-import path from "path"
-import os from "os"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-import { Locale } from "../../../util/locale"
+import {
+  createPermissionBodyState,
+  permissionAlwaysLines,
+  permissionCancel,
+  permissionEscape,
+  permissionHover,
+  permissionInfo,
+  permissionLabel,
+  permissionOptions,
+  permissionReject,
+  permissionRun,
+  permissionShift,
+  type PermissionBodyState,
+  type PermissionOption,
+} from "./permission.shared"
 import { toolDiffView, toolFiletype } from "./tool"
 import type { RunFooterTheme } from "./theme"
 import type { PermissionReply, RunDiffStyle } from "./types"
 
-type Dict = Record<string, unknown>
 type RejectArea = {
   isDestroyed: boolean
   plainText: string
   cursorOffset: number
   setText(text: string): void
   focus(): void
-}
-
-export type PermissionStage = "permission" | "always" | "reject"
-export type PermissionOption = "once" | "always" | "reject" | "confirm" | "cancel"
-
-export type PermissionBodyState = {
-  requestID: string
-  stage: PermissionStage
-  selected: PermissionOption
-  message: string
-  submitting: boolean
-}
-
-export function createPermissionBodyState(requestID: string): PermissionBodyState {
-  return {
-    requestID,
-    stage: "permission",
-    selected: "once",
-    message: "",
-    submitting: false,
-  }
-}
-
-export function permissionOptions(stage: PermissionStage): PermissionOption[] {
-  if (stage === "permission") {
-    return ["once", "always", "reject"]
-  }
-
-  if (stage === "always") {
-    return ["confirm", "cancel"]
-  }
-
-  return []
-}
-
-function dict(v: unknown): Dict {
-  if (!v || typeof v !== "object" || Array.isArray(v)) {
-    return {}
-  }
-
-  return v as Dict
-}
-
-function text(v: unknown): string {
-  return typeof v === "string" ? v : ""
-}
-
-function normalizePath(input?: string) {
-  if (!input) return ""
-
-  const cwd = process.cwd()
-  const home = os.homedir()
-  const absolute = path.isAbsolute(input) ? input : path.resolve(cwd, input)
-  const relative = path.relative(cwd, absolute)
-
-  if (!relative) return "."
-  if (!relative.startsWith("..")) return relative
-  if (home && (absolute === home || absolute.startsWith(home + path.sep))) {
-    return absolute.replace(home, "~")
-  }
-
-  return absolute
-}
-
-function data(request: PermissionRequest): Dict {
-  const meta = dict(request.metadata)
-  return {
-    ...meta,
-    ...dict(meta.input),
-  }
-}
-
-function patterns(request: PermissionRequest): string[] {
-  return request.patterns.filter((item): item is string => typeof item === "string")
-}
-
-export function permissionInfo(request: PermissionRequest): {
-  icon: string
-  title: string
-  lines: string[]
-  diff?: string
-  file?: string
-} {
-  const input = data(request)
-
-  if (request.permission === "edit") {
-    const file = text(input.filepath) || patterns(request)[0] || ""
-    return {
-      icon: "→",
-      title: `Edit ${normalizePath(file)}`,
-      lines: [],
-      diff: text(input.diff),
-      file,
-    }
-  }
-
-  if (request.permission === "read") {
-    const file = text(input.filePath) || patterns(request)[0] || ""
-    return {
-      icon: "→",
-      title: `Read ${normalizePath(file)}`,
-      lines: file ? [`Path: ${normalizePath(file)}`] : [],
-    }
-  }
-
-  if (request.permission === "glob") {
-    const pattern = text(input.pattern) || patterns(request)[0] || ""
-    return {
-      icon: "✱",
-      title: `Glob "${pattern}"`,
-      lines: pattern ? [`Pattern: ${pattern}`] : [],
-    }
-  }
-
-  if (request.permission === "grep") {
-    const pattern = text(input.pattern) || patterns(request)[0] || ""
-    return {
-      icon: "✱",
-      title: `Grep "${pattern}"`,
-      lines: pattern ? [`Pattern: ${pattern}`] : [],
-    }
-  }
-
-  if (request.permission === "list") {
-    const dir = text(input.path) || patterns(request)[0] || ""
-    return {
-      icon: "→",
-      title: `List ${normalizePath(dir)}`,
-      lines: dir ? [`Path: ${normalizePath(dir)}`] : [],
-    }
-  }
-
-  if (request.permission === "bash") {
-    const title = text(input.description) || "Shell command"
-    const command = text(input.command)
-    return {
-      icon: "#",
-      title,
-      lines: command ? [`$ ${command}`] : patterns(request).map((item) => `- ${item}`),
-    }
-  }
-
-  if (request.permission === "task") {
-    const type = text(input.subagent_type) || "general"
-    const desc = text(input.description)
-    return {
-      icon: "#",
-      title: `${Locale.titlecase(type)} Task`,
-      lines: desc ? [`◉ ${desc}`] : [],
-    }
-  }
-
-  if (request.permission === "webfetch") {
-    const url = text(input.url)
-    return {
-      icon: "%",
-      title: `WebFetch ${url}`,
-      lines: url ? [`URL: ${url}`] : [],
-    }
-  }
-
-  if (request.permission === "websearch") {
-    const query = text(input.query)
-    return {
-      icon: "◈",
-      title: `Exa Web Search "${query}"`,
-      lines: query ? [`Query: ${query}`] : [],
-    }
-  }
-
-  if (request.permission === "codesearch") {
-    const query = text(input.query)
-    return {
-      icon: "◇",
-      title: `Exa Code Search "${query}"`,
-      lines: query ? [`Query: ${query}`] : [],
-    }
-  }
-
-  if (request.permission === "external_directory") {
-    const meta = dict(request.metadata)
-    const raw = text(meta.parentDir) || text(meta.filepath) || patterns(request)[0] || ""
-    const dir = raw.includes("*") ? raw.slice(0, raw.indexOf("*")).replace(/[\\/]+$/, "") : raw
-    return {
-      icon: "←",
-      title: `Access external directory ${normalizePath(dir)}`,
-      lines: patterns(request).map((item) => `- ${item}`),
-    }
-  }
-
-  if (request.permission === "doom_loop") {
-    return {
-      icon: "⟳",
-      title: "Continue after repeated failures",
-      lines: ["This keeps the session running despite repeated failures."],
-    }
-  }
-
-  return {
-    icon: "⚙",
-    title: `Call tool ${request.permission}`,
-    lines: [`Tool: ${request.permission}`],
-  }
-}
-
-function alwaysLines(request: PermissionRequest): string[] {
-  if (request.always.length === 1 && request.always[0] === "*") {
-    return [`This will allow ${request.permission} until OpenCode is restarted.`]
-  }
-
-  return [
-    "This will allow the following patterns until OpenCode is restarted.",
-    ...request.always.map((item) => `- ${item}`),
-  ]
-}
-
-function label(option: PermissionOption): string {
-  if (option === "once") return "Allow once"
-  if (option === "always") return "Allow always"
-  if (option === "reject") return "Reject"
-  if (option === "confirm") return "Confirm"
-  return "Cancel"
 }
 
 function buttons(
@@ -263,7 +52,7 @@ function buttons(
               if (!disabled) onSelect(option)
             }}
           >
-            <text fg={option === selected ? theme.surface : theme.muted}>{label(option)}</text>
+            <text fg={option === selected ? theme.surface : theme.muted}>{permissionLabel(option)}</text>
           </box>
         )}
       </For>
@@ -362,17 +151,7 @@ export function RunPermissionBody(props: {
   })
 
   const shift = (dir: -1 | 1) => {
-    const list = permissionOptions(state().stage)
-    if (list.length === 0) {
-      return
-    }
-
-    const idx = Math.max(0, list.indexOf(state().selected))
-    const next = list[(idx + dir + list.length) % list.length]
-    setState((prev) => ({
-      ...prev,
-      selected: next,
-    }))
+    setState((prev) => permissionShift(prev, dir))
   }
 
   const submit = async (next: PermissionReply) => {
@@ -393,63 +172,29 @@ export function RunPermissionBody(props: {
 
   const run = (option: PermissionOption) => {
     const cur = state()
-    if (cur.submitting) {
+    const next = permissionRun(cur, props.request.id, option)
+    if (next.state !== cur) {
+      setState(next.state)
+    }
+
+    if (!next.reply) {
       return
     }
 
-    if (cur.stage === "permission") {
-      if (option === "always") {
-        setState((prev) => ({
-          ...prev,
-          stage: "always",
-          selected: "confirm",
-        }))
-        return
-      }
-
-      if (option === "reject") {
-        setState((prev) => ({
-          ...prev,
-          stage: "reject",
-          selected: "reject",
-        }))
-        return
-      }
-
-      void submit(permissionReply(props.request.id, "once"))
-      return
-    }
-
-    if (cur.stage !== "always") {
-      return
-    }
-
-    if (option === "cancel") {
-      setState((prev) => ({
-        ...prev,
-        stage: "permission",
-        selected: "always",
-      }))
-      return
-    }
-
-    void submit(permissionReply(props.request.id, "always"))
+    void submit(next.reply)
   }
 
   const reject = () => {
-    if (state().submitting) {
+    const next = permissionReject(state(), props.request.id)
+    if (!next) {
       return
     }
 
-    void submit(permissionReply(props.request.id, "reject", state().message))
+    void submit(next)
   }
 
   const cancelReject = () => {
-    setState((prev) => ({
-      ...prev,
-      stage: "permission",
-      selected: "reject",
-    }))
+    setState((prev) => permissionCancel(prev))
   }
 
   useKeyboard((event) => {
@@ -487,21 +232,7 @@ export function RunPermissionBody(props: {
       return
     }
 
-    if (cur.stage === "always") {
-      setState((prev) => ({
-        ...prev,
-        stage: "permission",
-        selected: "always",
-      }))
-      event.preventDefault()
-      return
-    }
-
-    setState((prev) => ({
-      ...prev,
-      stage: "reject",
-      selected: "reject",
-    }))
+    setState((prev) => permissionEscape(prev))
     event.preventDefault()
   })
 
@@ -575,7 +306,9 @@ export function RunPermissionBody(props: {
               }}
             >
               <box width="100%" flexDirection="column" gap={1}>
-                <For each={alwaysLines(props.request)}>{(line) => <text fg={props.theme.text}>{line}</text>}</For>
+                <For each={permissionAlwaysLines(props.request)}>
+                  {(line) => <text fg={props.theme.text}>{line}</text>}
+                </For>
               </box>
             </scrollbox>
           </Match>
@@ -609,10 +342,7 @@ export function RunPermissionBody(props: {
               props.theme,
               busy(),
               (option) => {
-                setState((prev) => ({
-                  ...prev,
-                  selected: option,
-                }))
+                setState((prev) => permissionHover(prev, option))
               },
               run,
             )}
@@ -640,12 +370,4 @@ export function RunPermissionBody(props: {
       </Switch>
     </box>
   )
-}
-
-export function permissionReply(requestID: string, reply: PermissionReply["reply"], message?: string): PermissionReply {
-  return {
-    requestID,
-    reply,
-    ...(message && message.trim() ? { message: message.trim() } : {}),
-  }
 }

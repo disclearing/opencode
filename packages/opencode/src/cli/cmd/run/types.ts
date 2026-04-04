@@ -20,7 +20,11 @@ export type RunInput = {
   files: RunFilePart[]
   initialInput?: string
   thinking: boolean
+  demo?: RunDemo
+  demoText?: string
 }
+
+export type RunDemo = "on" | "permission" | "question" | "mix" | "text"
 
 export type EntryKind = "system" | "user" | "assistant" | "reasoning" | "tool" | "error"
 

@@ -1,7 +1,32 @@
 /** @jsxImportSource @opentui/solid */
 import { useKeyboard } from "@opentui/solid"
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
-import type { QuestionInfo, QuestionRequest } from "@opencode-ai/sdk/v2"
+import type { QuestionRequest } from "@opencode-ai/sdk/v2"
+import {
+  createQuestionBodyState,
+  questionConfirm,
+  questionCustom,
+  questionHint,
+  questionInfo,
+  questionInput,
+  questionMove,
+  questionOther,
+  questionPicked,
+  questionReject,
+  questionSave,
+  questionSelect,
+  questionSetEditing,
+  questionSetSelected,
+  questionSetSubmitting,
+  questionSetTab,
+  questionSingle,
+  questionStoreCustom,
+  questionSubmit,
+  questionSync,
+  questionTabs,
+  questionTotal,
+  type QuestionBodyState,
+} from "./question.shared"
 import type { RunFooterTheme } from "./theme"
 import type { QuestionReject, QuestionReply } from "./types"
 
@@ -11,104 +36,6 @@ type Area = {
   cursorOffset: number
   setText(text: string): void
   focus(): void
-}
-
-export type QuestionBodyState = {
-  requestID: string
-  tab: number
-  answers: string[][]
-  custom: string[]
-  selected: number
-  editing: boolean
-  submitting: boolean
-}
-
-export function createQuestionBodyState(requestID: string): QuestionBodyState {
-  return {
-    requestID,
-    tab: 0,
-    answers: [],
-    custom: [],
-    selected: 0,
-    editing: false,
-    submitting: false,
-  }
-}
-
-export function questionSingle(request: QuestionRequest): boolean {
-  return request.questions.length === 1 && request.questions[0]?.multiple !== true
-}
-
-export function questionTabs(request: QuestionRequest): number {
-  return questionSingle(request) ? 1 : request.questions.length + 1
-}
-
-export function questionConfirm(request: QuestionRequest, state: QuestionBodyState): boolean {
-  return !questionSingle(request) && state.tab === request.questions.length
-}
-
-export function questionInfo(request: QuestionRequest, state: QuestionBodyState): QuestionInfo | undefined {
-  return request.questions[state.tab]
-}
-
-export function questionCustom(request: QuestionRequest, state: QuestionBodyState): boolean {
-  return questionInfo(request, state)?.custom !== false
-}
-
-export function questionInput(state: QuestionBodyState): string {
-  return state.custom[state.tab] ?? ""
-}
-
-export function questionPicked(state: QuestionBodyState): boolean {
-  const value = questionInput(state)
-  if (!value) {
-    return false
-  }
-
-  return state.answers[state.tab]?.includes(value) ?? false
-}
-
-export function questionOther(request: QuestionRequest, state: QuestionBodyState): boolean {
-  const info = questionInfo(request, state)
-  if (!info || info.custom === false) {
-    return false
-  }
-
-  return state.selected === info.options.length
-}
-
-export function questionTotal(request: QuestionRequest, state: QuestionBodyState): number {
-  const info = questionInfo(request, state)
-  if (!info) {
-    return 0
-  }
-
-  return info.options.length + (questionCustom(request, state) ? 1 : 0)
-}
-
-export function questionAnswers(state: QuestionBodyState, count: number): string[][] {
-  return Array.from({ length: count }, (_, i) => state.answers[i] ?? [])
-}
-
-function hint(request: QuestionRequest, state: QuestionBodyState): string {
-  if (state.submitting) {
-    return "Waiting for question event..."
-  }
-
-  if (questionConfirm(request, state)) {
-    return "enter submit   esc dismiss"
-  }
-
-  if (state.editing) {
-    return "enter save   esc cancel"
-  }
-
-  const info = questionInfo(request, state)
-  if (questionSingle(request)) {
-    return `↑↓ select   enter ${info?.multiple ? "toggle" : "submit"}   esc dismiss`
-  }
-
-  return `⇆ tab   ↑↓ select   enter ${info?.multiple ? "toggle" : "confirm"}   esc dismiss`
 }
 
 export function RunQuestionBody(props: {
@@ -128,228 +55,86 @@ export function RunQuestionBody(props: {
   let area: Area | undefined
 
   createEffect(() => {
-    const id = props.request.id
-    if (state().requestID === id) {
-      return
-    }
-
-    setState(createQuestionBodyState(id))
+    setState((prev) => questionSync(prev, props.request.id))
   })
 
   const setTab = (tab: number) => {
-    setState((prev) => ({
-      ...prev,
-      tab,
-      selected: 0,
-      editing: false,
-    }))
+    setState((prev) => questionSetTab(prev, tab))
   }
 
   const move = (dir: -1 | 1) => {
-    const total = questionTotal(props.request, state())
-    if (total === 0) {
-      return
-    }
-
-    setState((prev) => ({
-      ...prev,
-      selected: (prev.selected + dir + total) % total,
-    }))
-  }
-
-  const storeAnswers = (tab: number, list: string[]) => {
-    setState((prev) => {
-      const answers = [...prev.answers]
-      answers[tab] = list
-      return {
-        ...prev,
-        answers,
-      }
-    })
-  }
-
-  const storeCustom = (tab: number, text: string) => {
-    setState((prev) => {
-      const custom = [...prev.custom]
-      custom[tab] = text
-      return {
-        ...prev,
-        custom,
-      }
-    })
+    setState((prev) => questionMove(prev, props.request, dir))
   }
 
   const beginReply = async (input: QuestionReply) => {
-    setState((prev) => ({
-      ...prev,
-      submitting: true,
-    }))
+    setState((prev) => questionSetSubmitting(prev, true))
 
     try {
       await props.onReply(input)
     } catch {
-      setState((prev) => ({
-        ...prev,
-        submitting: false,
-      }))
+      setState((prev) => questionSetSubmitting(prev, false))
     }
   }
 
   const beginReject = async (input: QuestionReject) => {
-    setState((prev) => ({
-      ...prev,
-      submitting: true,
-    }))
+    setState((prev) => questionSetSubmitting(prev, true))
 
     try {
       await props.onReject(input)
     } catch {
-      setState((prev) => ({
-        ...prev,
-        submitting: false,
-      }))
+      setState((prev) => questionSetSubmitting(prev, false))
     }
-  }
-
-  const pick = (answer: string, custom = false) => {
-    const cur = state()
-    const answers = [...cur.answers]
-    answers[cur.tab] = [answer]
-    const next = {
-      ...cur,
-      answers,
-      editing: false,
-    }
-    if (custom) {
-      const list = [...cur.custom]
-      list[cur.tab] = answer
-      next.custom = list
-    }
-    setState(next)
-
-    if (single()) {
-      void beginReply({
-        requestID: props.request.id,
-        answers: [[answer]],
-      })
-      return
-    }
-
-    setTab(cur.tab + 1)
-  }
-
-  const toggle = (answer: string) => {
-    const cur = state()
-    const list = [...(cur.answers[cur.tab] ?? [])]
-    const idx = list.indexOf(answer)
-    if (idx === -1) {
-      list.push(answer)
-    } else {
-      list.splice(idx, 1)
-    }
-    storeAnswers(cur.tab, list)
   }
 
   const saveCustom = () => {
     const cur = state()
-    const item = questionInfo(props.request, cur)
-    if (!item) {
+    const next = questionSave(cur, props.request)
+    if (next.state !== cur) {
+      setState(next.state)
+    }
+
+    if (!next.reply) {
       return
     }
 
-    const text = questionInput(cur).trim()
-    const prev = cur.custom[cur.tab]
-    if (!text) {
-      if (prev) {
-        storeCustom(cur.tab, "")
-        storeAnswers(
-          cur.tab,
-          (cur.answers[cur.tab] ?? []).filter((entry) => entry !== prev),
-        )
-      }
-      setState((next) => ({
-        ...next,
-        editing: false,
-      }))
+    void beginReply(next.reply)
+  }
+
+  const choose = (selected: number) => {
+    const base = state()
+    const cur = questionSetSelected(base, selected)
+    const next = questionSelect(cur, props.request)
+    if (next.state !== base) {
+      setState(next.state)
+    }
+
+    if (!next.reply) {
       return
     }
 
-    if (item.multiple) {
-      const answers = [...(cur.answers[cur.tab] ?? [])]
-      if (prev) {
-        const idx = answers.indexOf(prev)
-        if (idx !== -1) {
-          answers.splice(idx, 1)
-        }
-      }
-      if (!answers.includes(text)) {
-        answers.push(text)
-      }
-      storeCustom(cur.tab, text)
-      storeAnswers(cur.tab, answers)
-      setState((next) => ({
-        ...next,
-        editing: false,
-      }))
-      return
-    }
-
-    pick(text, true)
+    void beginReply(next.reply)
   }
 
   const select = () => {
     const cur = state()
-    const item = questionInfo(props.request, cur)
-    if (!item) {
+    const next = questionSelect(cur, props.request)
+    if (next.state !== cur) {
+      setState(next.state)
+    }
+
+    if (!next.reply) {
       return
     }
 
-    if (questionOther(props.request, cur)) {
-      if (!item.multiple) {
-        setState((next) => ({
-          ...next,
-          editing: true,
-        }))
-        return
-      }
-
-      const value = questionInput(cur)
-      if (value && questionPicked(cur)) {
-        toggle(value)
-        return
-      }
-
-      setState((next) => ({
-        ...next,
-        editing: true,
-      }))
-      return
-    }
-
-    const option = item.options[cur.selected]
-    if (!option) {
-      return
-    }
-
-    if (item.multiple) {
-      toggle(option.label)
-      return
-    }
-
-    pick(option.label)
+    void beginReply(next.reply)
   }
 
   const submit = () => {
-    void beginReply({
-      requestID: props.request.id,
-      answers: questionAnswers(state(), props.request.questions.length),
-    })
+    void beginReply(questionSubmit(props.request, state()))
   }
 
   const reject = () => {
-    void beginReject({
-      requestID: props.request.id,
-    })
+    void beginReject(questionReject(props.request))
   }
 
   useKeyboard((event) => {
@@ -361,10 +146,7 @@ export function RunQuestionBody(props: {
 
     if (cur.editing) {
       if (event.name === "escape") {
-        setState((prev) => ({
-          ...prev,
-          editing: false,
-        }))
+        setState((prev) => questionSetEditing(prev, false))
         event.preventDefault()
         return
       }
@@ -413,11 +195,7 @@ export function RunQuestionBody(props: {
     const max = Math.min(total, 9)
     const digit = Number(event.name)
     if (!Number.isNaN(digit) && digit >= 1 && digit <= max) {
-      setState((prev) => ({
-        ...prev,
-        selected: digit - 1,
-      }))
-      select()
+      choose(digit - 1)
       event.preventDefault()
       return
     }
@@ -562,11 +340,7 @@ export function RunQuestionBody(props: {
                       gap={0}
                       onMouseUp={() => {
                         if (!disabled()) {
-                          setState((prev) => ({
-                            ...prev,
-                            selected: index(),
-                          }))
-                          select()
+                          choose(index())
                         }
                       }}
                     >
@@ -591,11 +365,7 @@ export function RunQuestionBody(props: {
                   gap={0}
                   onMouseUp={() => {
                     if (!disabled()) {
-                      setState((prev) => ({
-                        ...prev,
-                        selected: info()?.options.length ?? 0,
-                      }))
-                      select()
+                      choose(info()?.options.length ?? 0)
                     }
                   }}
                 >
@@ -633,7 +403,9 @@ export function RunQuestionBody(props: {
                         if (!area || area.isDestroyed || disabled()) {
                           return
                         }
-                        storeCustom(state().tab, area.plainText)
+
+                        const text = area.plainText
+                        setState((prev) => questionStoreCustom(prev, prev.tab, text))
                       }}
                       ref={(item) => {
                         area = item as Area
@@ -648,7 +420,7 @@ export function RunQuestionBody(props: {
       </box>
 
       <text id="run-direct-footer-question-hint" fg={props.theme.muted} wrapMode="word" flexShrink={0}>
-        {hint(props.request, state())}
+        {questionHint(props.request, state())}
       </text>
     </box>
   )
