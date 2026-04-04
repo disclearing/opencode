@@ -541,14 +541,11 @@ export async function runPromptQueue(input: QueueInput): Promise<void> {
   }
 }
 
-type BootContext = Pick<RunInput, "sdk" | "sessionID" | "sessionTitle" | "resume" | "agent" | "model" | "variant">
+type BootContext = Pick<RunInput, "sdk" | "sessionID" | "sessionTitle" | "agent" | "model" | "variant">
 
-type RunBootInput = {
+type RunRuntimeInput = {
   boot: () => Promise<BootContext>
   afterPaint?: (ctx: BootContext) => Promise<void> | void
-  agent: RunInput["agent"]
-  model: RunInput["model"]
-  variant: RunInput["variant"]
   files: RunInput["files"]
   initialInput?: string
   thinking: boolean
@@ -567,50 +564,21 @@ type RunLocalInput = {
   thinking: boolean
 }
 
-function waitReady<T>(task: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
-  if (signal.aborted) {
-    return Promise.resolve(undefined)
-  }
-
-  return new Promise<T | undefined>((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort)
-      resolve(undefined)
-    }
-
-    signal.addEventListener("abort", onAbort, { once: true })
-    void task.then(
-      (value) => {
-        signal.removeEventListener("abort", onAbort)
-        resolve(value)
-      },
-      (error) => {
-        signal.removeEventListener("abort", onAbort)
-        reject(error)
-      },
-    )
-  })
-}
-
-export async function runInteractiveBootMode(input: RunBootInput): Promise<void> {
+async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   const keybindsTask = resolveFooterKeybinds()
   const diffTask = resolveDiffStyle()
-  const ready = input.boot()
-  const seeded = Boolean(input.initialInput?.trim())
+  const ctx = await input.boot()
+  const modelTask = resolveModelInfo(ctx.sdk, ctx.model)
+  const sessionTask = resolveSessionInfo(ctx.sdk, ctx.sessionID, ctx.model)
+  const savedTask = resolveSavedVariant(ctx.model)
   const state: SplashState = {
     entry: false,
     exit: false,
   }
-  let meta: ReturnType<typeof splashMeta> | undefined
-  let first = true
-  let sessionVariant: string | undefined
-  let savedVariant: string | undefined
   let variants: string[] = []
   let limits: Record<string, number> = {}
-  let activeVariant = input.variant
+  let activeVariant: string | undefined
   let aborting = false
-  let ctx: BootContext | undefined
-  let modelTask: Promise<void> | undefined
 
   const renderer = await createCliRenderer({
     targetFps: 30,
@@ -628,47 +596,54 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
   })
   const theme = await resolveRunTheme(renderer)
   renderer.setBackgroundColor(theme.background)
-  const [keybinds, diffStyle] = await Promise.all([keybindsTask, diffTask])
+  const [keybinds, diffStyle, session, savedVariant] = await Promise.all([
+    keybindsTask,
+    diffTask,
+    sessionTask,
+    savedTask,
+  ])
+  const meta = splashMeta({
+    title: splashTitle(ctx.sessionTitle, session.history),
+    session_id: ctx.sessionID,
+  })
+  queueSplash(
+    renderer,
+    state,
+    "entry",
+    entrySplash({
+      ...meta,
+      theme: theme.entry,
+      background: theme.background,
+    }),
+  )
+  activeVariant = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
 
   const footer = new RunFooter(renderer, {
     ...footerLabels({
-      agent: input.agent,
-      model: input.model,
+      agent: ctx.agent,
+      model: ctx.model,
       variant: activeVariant,
     }),
-    first,
-    history: [],
+    first: session.first,
+    history: session.history,
     theme,
     keybinds,
     diffStyle,
     onCycleVariant: () => {
-      const model = ctx?.model ?? input.model
-      if (!model || variants.length === 0) {
-        if (ctx) {
-          loadModel(ctx)
-          return {
-            status: "loading variants",
-          }
-        }
-
+      if (!ctx.model || variants.length === 0) {
         return {
           status: "no variants available",
         }
       }
 
       activeVariant = cycleVariant(activeVariant, variants)
-      saveVariant(model, activeVariant)
+      saveVariant(ctx.model, activeVariant)
       return {
         status: activeVariant ? `variant ${activeVariant}` : "variant default",
-        modelLabel: formatModelLabel(model, activeVariant),
+        modelLabel: formatModelLabel(ctx.model, activeVariant),
       }
     },
     onInterrupt: () => {
-      if (!ctx) {
-        footer.patch({ status: "starting backend" })
-        return
-      }
-
       if (aborting) {
         return
       }
@@ -684,88 +659,29 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
         })
     },
   })
-  footer.patch({ status: "starting backend" })
-  queueSplash(
-    renderer,
-    state,
-    "entry",
-    entrySplash({
-      title: "",
-      session_id: "",
-      theme: theme.entry,
-      background: theme.background,
-      showSession: false,
-    }),
-  )
 
-  const loadModel = (next: BootContext) => {
-    if (modelTask) {
+  if (input.afterPaint) {
+    void Promise.resolve(input.afterPaint(ctx)).catch(() => {})
+  }
+
+  void modelTask.then((info) => {
+    variants = info.variants
+    limits = info.limits
+
+    const next = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
+    if (next === activeVariant) {
       return
     }
 
-    modelTask = resolveModelInfo(next.sdk, next.model)
-      .then((info) => {
-        variants = info.variants
-        limits = info.limits
-        const variant = resolveVariant(next.variant, sessionVariant, savedVariant, variants)
-        if (variant === activeVariant) {
-          return
-        }
+    activeVariant = next
+    if (!ctx.model || footer.isClosed) {
+      return
+    }
 
-        activeVariant = variant
-        if (!next.model || footer.isClosed) {
-          return
-        }
-
-        footer.patch({
-          model: formatModelLabel(next.model, activeVariant),
-        })
-      })
-      .catch(() => {})
-  }
-
-  const setup = ready
-    .then(async (next) => {
-      ctx = next
-      meta = splashMeta({
-        title: next.sessionTitle,
-        session_id: next.sessionID,
-      })
-
-      footer.patch({ status: "loading session" })
-      const [session, saved] = await Promise.all([
-        resolveSessionInfo(next.sdk, next.sessionID, next.model),
-        resolveSavedVariant(next.model),
-      ])
-
-      first = session.first
-      sessionVariant = session.variant
-      savedVariant = saved
-      activeVariant = resolveVariant(next.variant, sessionVariant, savedVariant, variants)
-      if (next.model) {
-        footer.patch({
-          model: formatModelLabel(next.model, activeVariant),
-        })
-      }
-
-      if (!session.first) {
-        footer.patch({ first: false })
-      }
-
-      footer.patch({ status: "" })
-
-      if (input.afterPaint) {
-        void Promise.resolve(input.afterPaint(next)).catch(() => {})
-      }
+    footer.patch({
+      model: formatModelLabel(ctx.model, activeVariant),
     })
-    .catch((error) => {
-      if (footer.isClosed) {
-        return
-      }
-
-      footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
-      footer.patch({ status: "backend failed" })
-    })
+  })
 
   const sigint = () => {
     footer.requestExit()
@@ -773,26 +689,17 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
   process.on("SIGINT", sigint)
 
   try {
-    if (seeded) {
-      await setup
-    }
-
     let includeFiles = true
     await runPromptQueue({
       footer,
       initialInput: input.initialInput,
       run: async (prompt, signal) => {
         try {
-          const next = await waitReady(ready, signal)
-          if (!next || signal.aborted || footer.isClosed) {
-            return
-          }
-
           await runPromptTurn({
-            sdk: next.sdk,
-            sessionID: next.sessionID,
-            agent: next.agent,
-            model: next.model,
+            sdk: ctx.sdk,
+            sessionID: ctx.sessionID,
+            agent: ctx.agent,
+            model: ctx.model,
             variant: activeVariant,
             prompt,
             files: input.files,
@@ -803,7 +710,6 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
             signal,
           })
           includeFiles = false
-          loadModel(next)
         } catch (error) {
           if (signal.aborted || footer.isClosed) {
             return
@@ -815,9 +721,9 @@ export async function runInteractiveBootMode(input: RunBootInput): Promise<void>
   } finally {
     process.off("SIGINT", sigint)
 
-    if (!renderer.isDestroyed && ctx) {
+    if (!renderer.isDestroyed) {
       const hasMessages = !(await resolveFirstPrompt(ctx.sdk, ctx.sessionID))
-      if (hasMessages && meta) {
+      if (hasMessages) {
         queueSplash(
           renderer,
           state,
@@ -844,10 +750,7 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
     fetch: input.fetch,
   })
 
-  return runInteractiveBootMode({
-    agent: input.agent,
-    model: input.model,
-    variant: input.variant,
+  return runInteractiveRuntime({
     files: input.files,
     initialInput: input.initialInput,
     thinking: input.thinking,
@@ -863,7 +766,6 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
         sdk,
         sessionID: sess.id,
         sessionTitle: sess.title,
-        resume: false,
         agent,
         model: input.model,
         variant: input.variant,
@@ -873,176 +775,17 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
 }
 
 export async function runInteractiveMode(input: RunInput): Promise<void> {
-  const keybindsTask = resolveFooterKeybinds()
-  const diffTask = resolveDiffStyle()
-  const modelTask = resolveModelInfo(input.sdk, input.model)
-  const sessionTask = resolveSessionInfo(input.sdk, input.sessionID, input.model)
-  const savedTask = resolveSavedVariant(input.model)
-
-  const state: SplashState = {
-    entry: false,
-    exit: false,
-  }
-  let variants: string[] = []
-  let limits: Record<string, number> = {}
-
-  const renderer = await createCliRenderer({
-    targetFps: 30,
-    maxFps: 60,
-    useMouse: false,
-    autoFocus: false,
-    openConsoleOnError: false,
-    exitOnCtrlC: false,
-    useKittyKeyboard: { events: process.platform === "win32" },
-    screenMode: "split-footer",
-    footerHeight: FOOTER_HEIGHT,
-    externalOutputMode: "capture-stdout",
-    consoleMode: "disabled",
-    clearOnShutdown: false,
-  })
-  const theme = await resolveRunTheme(renderer)
-  renderer.setBackgroundColor(theme.background)
-  const [keybinds, diffStyle, session, savedVariant] = await Promise.all([
-    keybindsTask,
-    diffTask,
-    sessionTask,
-    savedTask,
-  ])
-  const meta = splashMeta({
-    title: splashTitle(input.sessionTitle, session.history),
-    session_id: input.sessionID,
-  })
-  queueSplash(
-    renderer,
-    state,
-    "entry",
-    entrySplash({
-      ...meta,
-      theme: theme.entry,
-      background: theme.background,
-    }),
-  )
-  let activeVariant = resolveVariant(input.variant, session.variant, savedVariant, variants)
-  let aborting = false
-
-  const footer = new RunFooter(renderer, {
-    ...footerLabels({
+  return runInteractiveRuntime({
+    files: input.files,
+    initialInput: input.initialInput,
+    thinking: input.thinking,
+    boot: async () => ({
+      sdk: input.sdk,
+      sessionID: input.sessionID,
+      sessionTitle: input.sessionTitle,
       agent: input.agent,
       model: input.model,
-      variant: activeVariant,
+      variant: input.variant,
     }),
-    first: session.first,
-    history: session.history,
-    theme,
-    keybinds,
-    diffStyle,
-    onCycleVariant: () => {
-      if (!input.model || variants.length === 0) {
-        return {
-          status: "no variants available",
-        }
-      }
-
-      activeVariant = cycleVariant(activeVariant, variants)
-      saveVariant(input.model, activeVariant)
-      return {
-        status: activeVariant ? `variant ${activeVariant}` : "variant default",
-        modelLabel: formatModelLabel(input.model, activeVariant),
-      }
-    },
-    onInterrupt: () => {
-      if (aborting) {
-        return
-      }
-
-      aborting = true
-      void input.sdk.session
-        .abort({
-          sessionID: input.sessionID,
-        })
-        .catch(() => {})
-        .finally(() => {
-          aborting = false
-        })
-    },
   })
-
-  void modelTask.then((info) => {
-    variants = info.variants
-    limits = info.limits
-
-    const next = resolveVariant(input.variant, session.variant, savedVariant, variants)
-    if (next === activeVariant) {
-      return
-    }
-
-    activeVariant = next
-    if (!input.model || footer.isClosed) {
-      return
-    }
-
-    footer.patch({
-      model: formatModelLabel(input.model, activeVariant),
-    })
-  })
-
-  const sigint = () => {
-    footer.requestExit()
-  }
-  process.on("SIGINT", sigint)
-
-  try {
-    let includeFiles = true
-    await runPromptQueue({
-      footer,
-      initialInput: input.initialInput,
-      run: async (prompt, signal) => {
-        try {
-          await runPromptTurn({
-            sdk: input.sdk,
-            sessionID: input.sessionID,
-            agent: input.agent,
-            model: input.model,
-            variant: activeVariant,
-            prompt,
-            files: input.files,
-            includeFiles,
-            thinking: input.thinking,
-            limits,
-            footer,
-            signal,
-          })
-          includeFiles = false
-        } catch (error) {
-          if (signal.aborted || footer.isClosed) {
-            return
-          }
-          footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
-        }
-      },
-    })
-  } finally {
-    process.off("SIGINT", sigint)
-
-    if (!renderer.isDestroyed) {
-      const hasMessages = !(await resolveFirstPrompt(input.sdk, input.sessionID))
-      if (hasMessages) {
-        queueSplash(
-          renderer,
-          state,
-          "exit",
-          exitSplash({
-            ...meta,
-            theme: theme.entry,
-            background: theme.background,
-          }),
-        )
-        await renderer.idle().catch(() => {})
-      }
-    }
-
-    footer.close()
-    footer.destroy()
-    shutdown(renderer)
-  }
 }
