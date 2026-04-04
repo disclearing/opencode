@@ -3,7 +3,7 @@ import { render } from "@opentui/solid"
 import { createComponent, createSignal, type Accessor, type Setter } from "solid-js"
 import { Keybind } from "../../../util/keybind"
 import { RunFooterView, TEXTAREA_MAX_ROWS, TEXTAREA_MIN_ROWS } from "./footer.view"
-import { entryWriter, normalizeEntry } from "./scrollback"
+import { entryWriter, normalizeEntry, spacerWriter } from "./scrollback"
 import type { RunTheme } from "./theme"
 import type {
   FooterApi,
@@ -205,7 +205,7 @@ export class RunFooter implements FooterApi {
       return
     }
 
-    if (!normalizeEntry(commit) && !commit.gap) {
+    if (!normalizeEntry(commit)) {
       return
     }
 
@@ -542,17 +542,7 @@ export class RunFooter implements FooterApi {
         continue
       }
 
-      this.renderer.writeToScrollback(
-        entryWriter(
-          {
-            ...item,
-            text: "",
-            gap: true,
-          },
-          this.options.theme.entry,
-          { diffStyle: this.options.diffStyle },
-        ),
-      )
+      this.renderer.writeToScrollback(spacerWriter())
       this.renderer.writeToScrollback(
         entryWriter(item, this.options.theme.entry, { diffStyle: this.options.diffStyle }),
       )

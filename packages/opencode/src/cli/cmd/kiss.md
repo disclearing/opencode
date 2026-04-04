@@ -151,7 +151,7 @@ fullscreen/direct components right now.
      by the renderer.
      Target: use typed fields for tool lifecycle and interruption state.
 
-- [ ] 6. Delete layout sentinels from transcript data.
+- [x] 6. Delete layout sentinels from transcript data.
      Files: `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/scrollback.tsx`, `packages/opencode/src/cli/cmd/run/types.ts`
      Why: `gap: true` and empty commits are layout hacks, not transcript data.
      Target: keep spacing and newline behavior inside the renderer or writer layer,

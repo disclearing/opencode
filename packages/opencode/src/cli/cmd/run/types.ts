@@ -90,7 +90,6 @@ export type StreamCommit = {
   interrupted?: boolean
   toolState?: StreamToolState
   toolError?: string
-  gap?: boolean
 }
 
 export type FooterApi = {

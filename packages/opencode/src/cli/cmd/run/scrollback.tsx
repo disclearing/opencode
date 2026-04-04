@@ -717,13 +717,7 @@ function leaf(node: unknown): MeasureNode | undefined {
   }
 }
 
-function fit(snapshot: ScrollbackSnapshot, ctx: ScrollbackRenderContext, gap = false) {
-  if (gap) {
-    snapshot.width = 0
-    snapshot.rowColumns = 0
-    return snapshot
-  }
-
+function fit(snapshot: ScrollbackSnapshot, ctx: ScrollbackRenderContext) {
   const node = leaf(snapshot.root)
   const width = cols(ctx)
   const box = node?.textBufferView?.measureForDimensions(width, Math.max(1, snapshot.height ?? 1))
@@ -918,7 +912,6 @@ function textWriter(body: string, commit: StreamCommit, theme: RunEntryTheme, fl
         trailingNewline: flags.trailingNewline,
       })(ctx),
       ctx,
-      commit.gap,
     )
 }
 
@@ -931,8 +924,20 @@ function reasoningWriter(body: string, commit: StreamCommit, theme: RunEntryThem
         trailingNewline: flags.trailingNewline,
       })(ctx),
       ctx,
-      commit.gap,
     )
+}
+
+function spacer(): ScrollbackWriter {
+  return (ctx) => {
+    const snapshot = createScrollbackWriter(() => <text width="100%" />, {
+      width: cols(ctx),
+      startOnNewLine: false,
+      trailingNewline: true,
+    })(ctx)
+    snapshot.width = 0
+    snapshot.rowColumns = 0
+    return snapshot
+  }
 }
 
 function blockTextWriter(body: string, theme: RunEntryTheme): ScrollbackWriter {
@@ -1009,13 +1014,6 @@ function patchTitle(file: Record<string, unknown>) {
 }
 
 function snapFlags(commit: StreamCommit) {
-  if (commit.gap) {
-    return {
-      startOnNewLine: false,
-      trailingNewline: true,
-    }
-  }
-
   if (commit.kind === "user") {
     return {
       startOnNewLine: true,
@@ -1061,7 +1059,7 @@ function buildTextWriter(commit: StreamCommit, theme: RunEntryTheme): Scrollback
   const body = normalizeEntry(commit)
   const flags = snapFlags(commit)
 
-  if (commit.kind === "reasoning" && commit.phase === "progress" && !commit.gap) {
+  if (commit.kind === "reasoning" && commit.phase === "progress") {
     return reasoningWriter(body, commit, theme, flags)
   }
 
@@ -1314,3 +1312,5 @@ export function entryWriter(
 export function blockWriter(text: string, theme: RunEntryTheme = RUN_THEME_FALLBACK.entry): ScrollbackWriter {
   return blockTextWriter(clean(text), theme)
 }
+
+export const spacerWriter = spacer
