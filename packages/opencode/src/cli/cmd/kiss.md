@@ -56,6 +56,7 @@ footer lane
 | Stage                    | Files                                                                                                                                                                                                                  | Code                                                                                           |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | CLI entry + session boot | `packages/opencode/src/cli/cmd/run.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`                                                                                                                                 | `RunCommand.handler`, `runInteractiveMode()`, `runInteractiveLocalMode()`                      |
+| Boot session model       | `packages/opencode/src/cli/cmd/run/session.shared.ts`, `packages/opencode/src/cli/cmd/run/runtime.boot.ts`, `packages/opencode/src/cli/cmd/run/variant.shared.ts`                                                      | `resolveSession()`, `sessionHistory()`, `pickVariant()`                                        |
 | Prompt submit            | `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`                                                                     | `onSubmit()`, `handlePrompt()`, `runPromptQueue()`                                             |
 | Request + event stream   | `packages/opencode/src/cli/cmd/run/stream.transport.ts`                                                                                                                                                                | `createSessionTransport()`, `runPromptTurn()`, `sdk.session.prompt()`, `sdk.event.subscribe()` |
 | Event reduction          | `packages/opencode/src/cli/cmd/run/session-data.ts`                                                                                                                                                                    | `createSessionData()`, `reduceSessionData()`, `flushInterrupted()`                             |
@@ -352,9 +353,7 @@ state. The fastest path to KISS is:
 
 - [ ] keep one session model
       Blocker: `session-data.ts` still owns the direct-mode `SessionData`
-      reducer, permission/question queues, and footer selection inputs, and
-      `runtime.boot.ts` still reconstructs prompt history and variant from
-      session messages instead of consuming one canonical session model.
+      reducer, permission/question queues, and footer selection inputs.
 
 - [x] keep one footer state owner
       Status: `footer.ts` owns `FooterState` and `FooterView`, and runtime/stream

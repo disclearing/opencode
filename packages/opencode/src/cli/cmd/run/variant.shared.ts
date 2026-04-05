@@ -1,11 +1,10 @@
 import path from "path"
 import { Global } from "../../../global"
 import { Filesystem } from "../../../util/filesystem"
+import { createSession, sessionVariant, type RunSession, type SessionMessages } from "./session.shared"
 import type { RunInput } from "./types"
 
 const MODEL_FILE = path.join(Global.Path.state, "model.json")
-
-type SessionMessages = NonNullable<Awaited<ReturnType<RunInput["sdk"]["session"]["messages"]>>["data"]>
 
 type ModelState = {
   variant?: Record<string, string | undefined>
@@ -41,25 +40,8 @@ export function cycleVariant(current: string | undefined, variants: string[]): s
   return variants[idx + 1]
 }
 
-export function pickVariant(model: RunInput["model"], messages: SessionMessages): string | undefined {
-  if (!model || !messages || messages.length === 0) {
-    return undefined
-  }
-
-  for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
-    const info = messages[idx]?.info
-    if (!info || info.role !== "user") {
-      continue
-    }
-
-    if (info.model.providerID !== model.providerID || info.model.modelID !== model.modelID) {
-      continue
-    }
-
-    return info.variant
-  }
-
-  return undefined
+export function pickVariant(model: RunInput["model"], input: RunSession | SessionMessages): string | undefined {
+  return sessionVariant(Array.isArray(input) ? createSession(input) : input, model)
 }
 
 function fitVariant(value: string | undefined, variants: string[]): string | undefined {

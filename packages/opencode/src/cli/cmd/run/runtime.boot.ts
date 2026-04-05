@@ -1,8 +1,7 @@
 import { TuiConfig } from "../../../config/tui"
+import { resolveSession, sessionHistory } from "./session.shared"
 import type { FooterKeybinds, RunDiffStyle, RunInput } from "./types"
 import { pickVariant } from "./variant.shared"
-
-const HISTORY_LIMIT = 200
 
 const DEFAULT_KEYBINDS: FooterKeybinds = {
   leader: "ctrl+x",
@@ -13,8 +12,6 @@ const DEFAULT_KEYBINDS: FooterKeybinds = {
   inputSubmit: "return",
   inputNewline: "shift+return,ctrl+return,alt+return,ctrl+j",
 }
-
-type SessionMessages = NonNullable<Awaited<ReturnType<RunInput["sdk"]["session"]["messages"]>>["data"]>
 
 export type ModelInfo = {
   variants: string[]
@@ -67,45 +64,17 @@ export async function resolveModelInfo(sdk: RunInput["sdk"], model: RunInput["mo
   }
 }
 
-function promptHistory(messages: SessionMessages): string[] {
-  const history: string[] = []
-
-  for (const message of messages) {
-    if (message.info.role !== "user") {
-      continue
-    }
-
-    const text = message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => part.text.trim())
-      .filter((part) => part.length > 0)
-      .join("\n")
-
-    if (!text || history[history.length - 1] === text) {
-      continue
-    }
-
-    history.push(text)
-  }
-
-  return history.slice(-HISTORY_LIMIT)
-}
-
 export async function resolveSessionInfo(
   sdk: RunInput["sdk"],
   sessionID: string,
   model: RunInput["model"],
 ): Promise<SessionInfo> {
   try {
-    const response = await sdk.session.messages({
-      sessionID,
-      limit: HISTORY_LIMIT,
-    })
-    const messages = response.data ?? []
+    const session = await resolveSession(sdk, sessionID)
     return {
-      first: messages.length === 0,
-      history: promptHistory(messages),
-      variant: pickVariant(model, messages),
+      first: session.first,
+      history: sessionHistory(session),
+      variant: pickVariant(model, session),
     }
   } catch {
     return {
