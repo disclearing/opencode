@@ -21,8 +21,6 @@ import { McpCommand } from "./cli/cmd/mcp"
 import { GithubCommand } from "./cli/cmd/github"
 import { ExportCommand } from "./cli/cmd/export"
 import { ImportCommand } from "./cli/cmd/import"
-import { AttachCommand } from "./cli/cmd/tui/attach"
-import { TuiThreadCommand } from "./cli/cmd/tui/thread"
 import { AcpCommand } from "./cli/cmd/acp"
 import { EOL } from "os"
 import { WebCommand } from "./cli/cmd/web"
@@ -50,6 +48,16 @@ process.on("uncaughtException", (e) => {
 })
 
 const args = hideBin(process.argv)
+
+function first(argv: string[]) {
+  return argv.find((item) => item.length > 0 && !item.startsWith("-"))
+}
+
+const cmd = first(args)
+const all = cmd === undefined || cmd === "completion" || args.includes("-h") || args.includes("--help")
+const attachTask = all || cmd === "attach" ? import("./cli/cmd/tui/attach").then((x) => x.AttachCommand) : undefined
+const threadTask = all || cmd === undefined ? import("./cli/cmd/tui/thread").then((x) => x.TuiThreadCommand) : undefined
+const [AttachCommand, TuiThreadCommand] = await Promise.all([attachTask, threadTask])
 
 function show(out: string) {
   const text = out.trimStart()
@@ -147,10 +155,18 @@ const cli = yargs(args)
   })
   .usage("")
   .completion("completion", "generate shell completion script")
+
+if (TuiThreadCommand) {
+  cli.command(TuiThreadCommand)
+}
+
+if (AttachCommand) {
+  cli.command(AttachCommand)
+}
+
+cli
   .command(AcpCommand)
   .command(McpCommand)
-  .command(TuiThreadCommand)
-  .command(AttachCommand)
   .command(RunCommand)
   .command(GenerateCommand)
   .command(DebugCommand)

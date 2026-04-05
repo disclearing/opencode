@@ -78,16 +78,33 @@ export namespace Plugin {
     Effect.runFork(bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() }))
   }
 
+  async function quietSkillWarn<T>(run: () => Promise<T>) {
+    const warn = console.warn
+    console.warn = (...args: unknown[]) => {
+      if (typeof args[0] === "string" && args[0].startsWith("Could not find any skills directories.")) {
+        return
+      }
+
+      warn(...args)
+    }
+
+    try {
+      return await run()
+    } finally {
+      console.warn = warn
+    }
+  }
+
   async function applyPlugin(load: PluginLoader.Loaded, input: PluginInput, hooks: Hooks[]) {
     const plugin = readV1Plugin(load.mod, load.spec, "server", "detect")
     if (plugin) {
       await resolvePluginId(load.source, load.spec, load.target, readPluginId(plugin.id, load.spec), load.pkg)
-      hooks.push(await (plugin as PluginModule).server(input, load.options))
+      hooks.push(await quietSkillWarn(() => (plugin as PluginModule).server(input, load.options)))
       return
     }
 
     for (const server of getLegacyPlugins(load.mod)) {
-      hooks.push(await server(input, load.options))
+      hooks.push(await quietSkillWarn(() => server(input, load.options)))
     }
   }
 
