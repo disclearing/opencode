@@ -10,6 +10,7 @@
 
 - `real`: shell `time` total runtime
 - `first_output`: first delay row from `/tmp/<name>/debug.timing` (proxy for time-to-first-paint)
+- `ui_first`: first terminal UI paint timing; when warnings print first, this is cumulative time until the first `158`-byte control-frame row in `debug.timing`
 
 ## Baseline (before kept changes)
 
@@ -78,7 +79,38 @@
   - No warning printed before UI startup.
 - Decision: **discarded** (user preferred visible warning over suppression).
 
+### 9) Lazy-load non-`run` command modules from `src/index.ts`
+
+- Hypothesis: loading only the invoked command family would reduce pre-runtime startup work.
+- Change:
+  - Keep `RunCommand` static.
+  - Dynamically import `acp`, `mcp`, `debug`, `providers/auth`, `agent`, `upgrade`, `uninstall`, `serve`, `web`, `models`, `stats`, `export`, `import`, `github`, `pr`, `session`, `plugin/plug`, `db`, `generate`, and `attach/thread` based on argv.
+- Result (kept runs: `perf-exp9-1..3`):
+  - `real`: `4.223s` to `4.267s` (median `4.239s`)
+  - `first_output` (warning): `3.743s` to `3.792s` (median `3.768s`)
+  - `ui_first`: `3.825s` to `3.867s` (median `3.844s`)
+- Decision: **kept**.
+
+### 10) Paint split-footer UI before local session boot completes
+
+- Hypothesis: first paint is blocked on local session boot; painting shell first should improve interactive readiness.
+- Change:
+  - In `runInteractiveRuntime()`, start local `boot()` in parallel.
+  - Create runtime lifecycle/renderer immediately from preview data in `runInteractiveLocalMode()` (`pending` session metadata, first-turn prompt defaults).
+  - Resolve boot context afterward for transport/session work and callbacks.
+- Result (kept runs: `perf-exp10-1..3`):
+  - `real`: `3.890s` to `3.934s` (median `3.911s`)
+  - `ui_first`: `2.934s` to `2.993s` (median `2.979s`)
+  - Startup warning appears after initial paint instead of blocking paint.
+- Decision: **kept**.
+
+### 11) Slim `run.ts` imports aggressively (server/provider/agent/tool/bootstrap)
+
+- Hypothesis: trimming `run.ts` imports would further reduce pre-runtime module load.
+- Result: broke command loading with `Provider.defaultLayer`/`Agent` initialization cycle on help/runtime paths.
+- Decision: **discarded**.
+
 ## Kept delta vs baseline
 
-- Baseline `real`: `5.495s` -> kept median `4.432s` (`-1.063s`, ~`19.3%` faster)
-- Baseline `first_output`: `5.088s` -> kept median `3.954s` (`-1.134s`, ~`22.3%` faster)
+- Baseline `real`: `5.495s` -> kept median `3.911s` (`-1.584s`, ~`28.8%` faster)
+- Baseline `ui_first`: `5.088s` -> kept median `2.979s` (`-2.109s`, ~`41.5%` faster)

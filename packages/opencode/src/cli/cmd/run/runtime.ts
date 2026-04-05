@@ -19,6 +19,15 @@ type BootContext = Pick<RunInput, "sdk" | "sessionID" | "sessionTitle" | "agent"
 type RunRuntimeInput = {
   boot: () => Promise<BootContext>
   afterPaint?: (ctx: BootContext) => Promise<void> | void
+  preview?: {
+    sessionID: string
+    sessionTitle?: string
+    first: boolean
+    history: string[]
+    agent: string | undefined
+    model: RunInput["model"]
+    variant: string | undefined
+  }
   files: RunInput["files"]
   initialInput?: string
   thinking: boolean
@@ -45,32 +54,42 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   const log = trace()
   const keybindTask = resolveFooterKeybinds()
   const diffTask = resolveDiffStyle()
-  const ctx = await input.boot()
-  const modelTask = resolveModelInfo(ctx.sdk, ctx.model)
-  const sessionTask = resolveSessionInfo(ctx.sdk, ctx.sessionID, ctx.model)
-  const savedTask = resolveSavedVariant(ctx.model)
+  const ctxTask = input.boot()
+  const base = input.preview ?? {
+    sessionID: "pending",
+    sessionTitle: undefined,
+    first: true,
+    history: [],
+    agent: undefined,
+    model: undefined,
+    variant: undefined,
+  }
   let variants: string[] = []
   let limits: Record<string, number> = {}
   let aborting = false
-  let shown = false
+  let shown = !base.first
   let demo: ReturnType<typeof createRunDemo> | undefined
+  let ctx: BootContext | undefined
+  let activeVariant = base.variant
 
-  const [keybinds, diffStyle, session, savedVariant] = await Promise.all([
-    keybindTask,
-    diffTask,
-    sessionTask,
-    savedTask,
-  ])
-  shown = !session.first
-  let activeVariant = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
+  const ready = async () => {
+    if (ctx) {
+      return ctx
+    }
+
+    ctx = await ctxTask
+    return ctx
+  }
+
+  const [keybinds, diffStyle] = await Promise.all([keybindTask, diffTask])
 
   const shell = await createRuntimeLifecycle({
-    sessionID: ctx.sessionID,
-    sessionTitle: ctx.sessionTitle,
-    first: session.first,
-    history: session.history,
-    agent: ctx.agent,
-    model: ctx.model,
+    sessionID: base.sessionID,
+    sessionTitle: base.sessionTitle,
+    first: base.first,
+    history: base.history,
+    agent: base.agent,
+    model: base.model,
     variant: activeVariant,
     keybinds,
     diffStyle,
@@ -79,35 +98,39 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
         return
       }
 
+      const now = await ready()
       log?.write("send.permission.reply", next)
-      await ctx.sdk.permission.reply(next)
+      await now.sdk.permission.reply(next)
     },
     onQuestionReply: async (next) => {
       if (demo?.questionReply(next)) {
         return
       }
 
-      await ctx.sdk.question.reply(next)
+      const now = await ready()
+      await now.sdk.question.reply(next)
     },
     onQuestionReject: async (next) => {
       if (demo?.questionReject(next)) {
         return
       }
 
-      await ctx.sdk.question.reject(next)
+      const now = await ready()
+      await now.sdk.question.reject(next)
     },
     onCycleVariant: () => {
-      if (!ctx.model || variants.length === 0) {
+      const model = ctx?.model ?? base.model
+      if (!model || variants.length === 0) {
         return {
           status: "no variants available",
         }
       }
 
       activeVariant = cycleVariant(activeVariant, variants)
-      saveVariant(ctx.model, activeVariant)
+      saveVariant(model, activeVariant)
       return {
         status: activeVariant ? `variant ${activeVariant}` : "variant default",
-        modelLabel: formatModelLabel(ctx.model, activeVariant),
+        modelLabel: formatModelLabel(model, activeVariant),
       }
     },
     onInterrupt: () => {
@@ -116,10 +139,12 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
       }
 
       aborting = true
-      void ctx.sdk.session
-        .abort({
-          sessionID: ctx.sessionID,
-        })
+      void ready()
+        .then((now) =>
+          now.sdk.session.abort({
+            sessionID: now.sessionID,
+          }),
+        )
         .catch(() => {})
         .finally(() => {
           aborting = false
@@ -128,46 +153,54 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   })
   const footer = shell.footer
 
+  const now = await ready()
+  const modelTask = resolveModelInfo(now.sdk, now.model)
+  const sessionTask = resolveSessionInfo(now.sdk, now.sessionID, now.model)
+  const savedTask = resolveSavedVariant(now.model)
+  const [session, savedVariant] = await Promise.all([sessionTask, savedTask])
+  shown = shown || !session.first
+  activeVariant = resolveVariant(now.variant, session.variant, savedVariant, variants)
+
   if (input.demo) {
     demo = createRunDemo({
       mode: input.demo,
       text: input.demoText,
       footer,
-      sessionID: ctx.sessionID,
+      sessionID: now.sessionID,
       thinking: input.thinking,
       limits: () => limits,
     })
   }
 
   if (input.afterPaint) {
-    void Promise.resolve(input.afterPaint(ctx)).catch(() => {})
+    void Promise.resolve(input.afterPaint(now)).catch(() => {})
   }
 
   void modelTask.then((info) => {
     variants = info.variants
     limits = info.limits
 
-    const next = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
+    const next = resolveVariant(now.variant, session.variant, savedVariant, variants)
     if (next === activeVariant) {
       return
     }
 
     activeVariant = next
-    if (!ctx.model || footer.isClosed) {
+    if (!now.model || footer.isClosed) {
       return
     }
 
     footer.event({
       type: "model",
-      model: formatModelLabel(ctx.model, activeVariant),
+      model: formatModelLabel(now.model, activeVariant),
     })
   })
 
   try {
     let includeFiles = true
     const stream = await createSessionTransport({
-      sdk: ctx.sdk,
-      sessionID: ctx.sessionID,
+      sdk: now.sdk,
+      sessionID: now.sessionID,
       thinking: input.thinking,
       limits: () => limits,
       footer,
@@ -193,8 +226,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
 
           try {
             await stream.runPromptTurn({
-              agent: ctx.agent,
-              model: ctx.model,
+              agent: now.agent,
+              model: now.model,
               variant: activeVariant,
               prompt,
               files: input.files,
@@ -227,6 +260,15 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
   })
 
   return runInteractiveRuntime({
+    preview: {
+      sessionID: "pending",
+      sessionTitle: undefined,
+      first: true,
+      history: [],
+      agent: input.agent,
+      model: input.model,
+      variant: input.variant,
+    },
     files: input.files,
     initialInput: input.initialInput,
     thinking: input.thinking,
