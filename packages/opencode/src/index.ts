@@ -1,18 +1,40 @@
 import yargs from "yargs"
 import { hideBin } from "yargs/helpers"
 import { RunCommand } from "./cli/cmd/run"
+import { GenerateCommand } from "./cli/cmd/generate"
 import { Log } from "./util/log"
+import { ConsoleCommand } from "./cli/cmd/account"
+import { ProvidersCommand } from "./cli/cmd/providers"
+import { AgentCommand } from "./cli/cmd/agent"
+import { UpgradeCommand } from "./cli/cmd/upgrade"
+import { UninstallCommand } from "./cli/cmd/uninstall"
+import { ModelsCommand } from "./cli/cmd/models"
 import { UI } from "./cli/ui"
 import { Installation } from "./installation"
 import { NamedError } from "@opencode-ai/util/error"
 import { FormatError } from "./cli/error"
+import { ServeCommand } from "./cli/cmd/serve"
 import { Filesystem } from "./util/filesystem"
+import { DebugCommand } from "./cli/cmd/debug"
+import { StatsCommand } from "./cli/cmd/stats"
+import { McpCommand } from "./cli/cmd/mcp"
+import { GithubCommand } from "./cli/cmd/github"
+import { ExportCommand } from "./cli/cmd/export"
+import { ImportCommand } from "./cli/cmd/import"
+import { AttachCommand } from "./cli/cmd/tui/attach"
+import { TuiThreadCommand } from "./cli/cmd/tui/thread"
+import { AcpCommand } from "./cli/cmd/acp"
 import { EOL } from "os"
+import { WebCommand } from "./cli/cmd/web"
+import { PrCommand } from "./cli/cmd/pr"
+import { SessionCommand } from "./cli/cmd/session"
+import { DbCommand } from "./cli/cmd/db"
 import path from "path"
 import { Global } from "./global"
 import { JsonMigration } from "./storage/json-migration"
 import { Database } from "./storage/db"
 import { errorMessage } from "./util/error"
+import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
 
 process.on("unhandledRejection", (e) => {
@@ -28,102 +50,6 @@ process.on("uncaughtException", (e) => {
 })
 
 const args = hideBin(process.argv)
-
-function first(argv: string[]) {
-  return argv.find((item) => item.length > 0 && !item.startsWith("-"))
-}
-
-const cmd = first(args)
-const known = new Set([
-  "run",
-  "acp",
-  "mcp",
-  "debug",
-  "console",
-  "providers",
-  "auth",
-  "agent",
-  "upgrade",
-  "uninstall",
-  "serve",
-  "web",
-  "models",
-  "stats",
-  "export",
-  "import",
-  "github",
-  "pr",
-  "session",
-  "plugin",
-  "plug",
-  "db",
-  "generate",
-  "attach",
-])
-const all =
-  cmd === undefined ||
-  cmd === "completion" ||
-  args.includes("-h") ||
-  args.includes("--help") ||
-  (cmd !== undefined && !known.has(cmd))
-
-function load<T>(on: boolean, get: () => Promise<T>): Promise<T | undefined> {
-  if (!on) {
-    return Promise.resolve(undefined)
-  }
-
-  return get()
-}
-
-const [
-  AttachCommand,
-  TuiThreadCommand,
-  AcpCommand,
-  McpCommand,
-  GenerateCommand,
-  DebugCommand,
-  ConsoleCommand,
-  ProvidersCommand,
-  AgentCommand,
-  UpgradeCommand,
-  UninstallCommand,
-  ServeCommand,
-  WebCommand,
-  ModelsCommand,
-  StatsCommand,
-  ExportCommand,
-  ImportCommand,
-  GithubCommand,
-  PrCommand,
-  SessionCommand,
-  PluginCommand,
-  DbCommand,
-] = await Promise.all([
-  load(all || cmd === "attach", () => import("./cli/cmd/tui/attach").then((x) => x.AttachCommand)),
-  load(all || cmd === undefined, () => import("./cli/cmd/tui/thread").then((x) => x.TuiThreadCommand)),
-  load(all || cmd === "acp", () => import("./cli/cmd/acp").then((x) => x.AcpCommand)),
-  load(all || cmd === "mcp", () => import("./cli/cmd/mcp").then((x) => x.McpCommand)),
-  load(all || cmd === "generate", () => import("./cli/cmd/generate").then((x) => x.GenerateCommand)),
-  load(all || cmd === "debug", () => import("./cli/cmd/debug").then((x) => x.DebugCommand)),
-  load(all || cmd === "console", () => import("./cli/cmd/account").then((x) => x.ConsoleCommand)),
-  load(all || cmd === "providers" || cmd === "auth", () =>
-    import("./cli/cmd/providers").then((x) => x.ProvidersCommand),
-  ),
-  load(all || cmd === "agent", () => import("./cli/cmd/agent").then((x) => x.AgentCommand)),
-  load(all || cmd === "upgrade", () => import("./cli/cmd/upgrade").then((x) => x.UpgradeCommand)),
-  load(all || cmd === "uninstall", () => import("./cli/cmd/uninstall").then((x) => x.UninstallCommand)),
-  load(all || cmd === "serve", () => import("./cli/cmd/serve").then((x) => x.ServeCommand)),
-  load(all || cmd === "web", () => import("./cli/cmd/web").then((x) => x.WebCommand)),
-  load(all || cmd === "models", () => import("./cli/cmd/models").then((x) => x.ModelsCommand)),
-  load(all || cmd === "stats", () => import("./cli/cmd/stats").then((x) => x.StatsCommand)),
-  load(all || cmd === "export", () => import("./cli/cmd/export").then((x) => x.ExportCommand)),
-  load(all || cmd === "import", () => import("./cli/cmd/import").then((x) => x.ImportCommand)),
-  load(all || cmd === "github", () => import("./cli/cmd/github").then((x) => x.GithubCommand)),
-  load(all || cmd === "pr", () => import("./cli/cmd/pr").then((x) => x.PrCommand)),
-  load(all || cmd === "session", () => import("./cli/cmd/session").then((x) => x.SessionCommand)),
-  load(all || cmd === "plugin" || cmd === "plug", () => import("./cli/cmd/plug").then((x) => x.PluginCommand)),
-  load(all || cmd === "db", () => import("./cli/cmd/db").then((x) => x.DbCommand)),
-])
 
 function show(out: string) {
   const text = out.trimStart()
@@ -221,98 +147,29 @@ const cli = yargs(args)
   })
   .usage("")
   .completion("completion", "generate shell completion script")
-
-if (TuiThreadCommand) {
-  cli.command(TuiThreadCommand)
-}
-
-if (AttachCommand) {
-  cli.command(AttachCommand)
-}
-
-if (AcpCommand) {
-  cli.command(AcpCommand)
-}
-
-if (McpCommand) {
-  cli.command(McpCommand)
-}
-
-cli.command(RunCommand)
-
-if (GenerateCommand) {
-  cli.command(GenerateCommand)
-}
-
-if (DebugCommand) {
-  cli.command(DebugCommand)
-}
-
-if (ConsoleCommand) {
-  cli.command(ConsoleCommand)
-}
-
-if (ProvidersCommand) {
-  cli.command(ProvidersCommand)
-}
-
-if (AgentCommand) {
-  cli.command(AgentCommand)
-}
-
-if (UpgradeCommand) {
-  cli.command(UpgradeCommand)
-}
-
-if (UninstallCommand) {
-  cli.command(UninstallCommand)
-}
-
-if (ServeCommand) {
-  cli.command(ServeCommand)
-}
-
-if (WebCommand) {
-  cli.command(WebCommand)
-}
-
-if (ModelsCommand) {
-  cli.command(ModelsCommand)
-}
-
-if (StatsCommand) {
-  cli.command(StatsCommand)
-}
-
-if (ExportCommand) {
-  cli.command(ExportCommand)
-}
-
-if (ImportCommand) {
-  cli.command(ImportCommand)
-}
-
-if (GithubCommand) {
-  cli.command(GithubCommand)
-}
-
-if (PrCommand) {
-  cli.command(PrCommand)
-}
-
-if (SessionCommand) {
-  cli.command(SessionCommand)
-}
-
-if (PluginCommand) {
-  cli.command(PluginCommand)
-}
-
-if (DbCommand) {
-  cli.command(DbCommand)
-}
-
-cli
+  .command(AcpCommand)
+  .command(McpCommand)
+  .command(TuiThreadCommand)
+  .command(AttachCommand)
+  .command(RunCommand)
+  .command(GenerateCommand)
+  .command(DebugCommand)
+  .command(ConsoleCommand)
+  .command(ProvidersCommand)
+  .command(AgentCommand)
+  .command(UpgradeCommand)
+  .command(UninstallCommand)
+  .command(ServeCommand)
+  .command(WebCommand)
+  .command(ModelsCommand)
+  .command(StatsCommand)
+  .command(ExportCommand)
+  .command(ImportCommand)
+  .command(GithubCommand)
+  .command(PrCommand)
+  .command(SessionCommand)
+  .command(PluginCommand)
+  .command(DbCommand)
   .fail((msg, err) => {
     if (
       msg?.startsWith("Unknown argument") ||
