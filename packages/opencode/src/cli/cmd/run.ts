@@ -8,12 +8,20 @@ import { bootstrap } from "../bootstrap"
 import { EOL } from "os"
 import { Filesystem } from "../../util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
-import { Provider } from "../../provider/provider"
-import { Agent } from "../../agent/agent"
 import { Permission } from "../../permission"
-import { runInteractiveLocalMode, runInteractiveMode } from "./run/runtime"
-import { toolInlineInfo } from "./run/tool"
 import type { RunDemo } from "./run/types"
+
+const runtimeTask = import("./run/runtime")
+type ModelInput = Parameters<OpencodeClient["session"]["prompt"]>[0]["model"]
+
+function pick(value: string | undefined): ModelInput | undefined {
+  if (!value) return undefined
+  const [providerID, ...rest] = value.split("/")
+  return {
+    providerID,
+    modelID: rest.join("/"),
+  } as ModelInput
+}
 
 type FilePart = {
   type: "file"
@@ -46,8 +54,9 @@ function block(info: Inline, output?: string) {
   UI.empty()
 }
 
-function tool(part: ToolPart) {
+async function tool(part: ToolPart) {
   try {
+    const { toolInlineInfo } = await import("./run/tool")
     const next = toolInlineInfo(part)
     if (next.mode === "block") {
       block(next, next.body)
@@ -362,7 +371,7 @@ export const RunCommand = cmd({
     async function localAgent() {
       if (!args.agent) return undefined
 
-      const entry = await Agent.get(args.agent)
+      const entry = await (await import("../../agent/agent")).Agent.get(args.agent)
       if (!entry) {
         UI.println(
           UI.Style.TEXT_WARNING_BOLD + "!",
@@ -471,7 +480,7 @@ export const RunCommand = cmd({
             if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
               if (emit("tool_use", { part })) continue
               if (part.state.status === "completed") {
-                tool(part)
+                await tool(part)
                 continue
               }
               inline({
@@ -488,7 +497,7 @@ export const RunCommand = cmd({
               args.format !== "json"
             ) {
               if (toggles.get(part.id) === true) continue
-              tool(part)
+              await tool(part)
               toggles.set(part.id, true)
             }
 
@@ -594,7 +603,7 @@ export const RunCommand = cmd({
           return
         }
 
-        const model = args.model ? Provider.parseModel(args.model) : undefined
+        const model = pick(args.model)
         await sdk.session.prompt({
           sessionID,
           agent,
@@ -605,7 +614,8 @@ export const RunCommand = cmd({
         return
       }
 
-      const model = args.model ? Provider.parseModel(args.model) : undefined
+      const model = pick(args.model)
+      const { runInteractiveMode } = await runtimeTask
       await runInteractiveMode({
         sdk,
         sessionID,
@@ -624,7 +634,8 @@ export const RunCommand = cmd({
     }
 
     if (args.interactive && !args.attach && !args.session && !args.continue) {
-      const model = args.model ? Provider.parseModel(args.model) : undefined
+      const model = pick(args.model)
+      const { runInteractiveLocalMode } = await runtimeTask
       const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const { Server } = await import("../../server/server")
         const request = new Request(input, init)

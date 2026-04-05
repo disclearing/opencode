@@ -2,17 +2,12 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2"
 import { createRunDemo } from "./demo"
 import { resolveDiffStyle, resolveFooterKeybinds, resolveModelInfo, resolveSessionInfo } from "./runtime.boot"
 import { createRuntimeLifecycle } from "./runtime.lifecycle"
-import { runPromptQueue } from "./runtime.queue"
-import { createSessionTransport, formatUnknownError } from "./stream.transport"
 import { trace } from "./trace"
 import { cycleVariant, formatModelLabel, resolveSavedVariant, resolveVariant, saveVariant } from "./variant.shared"
 import type { RunInput } from "./types"
 
 /** @internal Exported for testing */
 export { pickVariant, resolveVariant } from "./variant.shared"
-
-/** @internal Exported for testing */
-export { runPromptQueue } from "./runtime.queue"
 
 type BootContext = Pick<RunInput, "sdk" | "sessionID" | "sessionTitle" | "agent" | "model" | "variant">
 
@@ -197,8 +192,9 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   })
 
   try {
+    const mod = await import("./stream.transport")
     let includeFiles = true
-    const stream = await createSessionTransport({
+    const stream = await mod.createSessionTransport({
       sdk: now.sdk,
       sessionID: now.sessionID,
       thinking: input.thinking,
@@ -212,7 +208,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
         await demo.start()
       }
 
-      await runPromptQueue({
+      const queue = await import("./runtime.queue")
+      await queue.runPromptQueue({
         footer,
         initialInput: input.initialInput,
         trace: log,
@@ -239,7 +236,7 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
             if (signal.aborted || footer.isClosed) {
               return
             }
-            footer.append({ kind: "error", text: formatUnknownError(error), phase: "start", source: "system" })
+            footer.append({ kind: "error", text: mod.formatUnknownError(error), phase: "start", source: "system" })
           }
         },
       })

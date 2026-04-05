@@ -127,7 +127,65 @@
 - Result (`perf-exp13-1..3`): noisy and slightly worse median `ui_first` than experiment 12.
 - Decision: **discarded**.
 
+### 14) Defer `bootstrap` import in `run.ts`
+
+- Hypothesis: `bootstrap` and transitive project/runtime imports are unnecessary for local interactive mode and can be deferred.
+- Result: broke startup with initialization-cycle errors (`Config.defaultLayer` / `Provider.defaultLayer` / `Instance` reference errors).
+- Decision: **discarded**.
+
+### 15) Merge footer keybind/diff config reads
+
+- Hypothesis: replacing two `TuiConfig.get()` calls with one combined read would reduce startup work.
+- Result (`perf-exp19-1..3`): no gain; slightly worse `ui_first` (about `2.89s` median in that revision).
+- Decision: **discarded**.
+
+### 16) Defer model parsing and provider import into local runtime boot
+
+- Hypothesis: parsing `--model` early in `run.ts` adds avoidable pre-paint module load.
+- Result (`perf-exp20-1..3`): no reliable `ui_first` improvement.
+- Decision: **discarded**.
+
+### 17) Disable Kitty keyboard setup for split-footer runtime
+
+- Hypothesis: disabling Kitty keyboard protocol setup may reduce terminal startup handshakes.
+- Result (`perf-exp21-1..3`): no consistent gain and worse tail latency.
+- Decision: **discarded**.
+
+### 18) Defer `RunFooter` module import until after first splash render
+
+- Hypothesis: static loading of `footer.ts`/`footer.view.tsx` dominates pre-paint startup.
+- Change:
+  - In `runtime.lifecycle.ts`, stop static-importing `RunFooter`.
+  - Queue entry splash, await first renderer idle, then dynamically import `./footer` and construct `RunFooter`.
+  - Widen `Lifecycle.footer` type to `FooterApi`.
+- Result (`perf-exp25-1..3`):
+  - `real`: `3.267s` to `3.438s` (median `3.317s`)
+  - `ui_first`: `2.275s` to `2.431s` (median `2.293s`)
+- Decision: **kept**.
+
+### 19) Defer run-runtime imports from `run.ts` and preload with a promise
+
+- Hypothesis: avoid static `run/runtime` module load cost while still warming it before interactive handlers need it.
+- Change:
+  - Replace static runtime import with `const runtimeTask = import("./run/runtime")`.
+  - Await `runtimeTask` only in interactive branches.
+  - Switch model parsing to a lightweight local splitter equivalent to `Provider.parseModel` behavior.
+  - Defer agent module import to `localAgent()` when `--agent` is present.
+- Result (`perf-exp35-1..3`):
+  - `real`: `3.235s` to `3.284s` (median `3.270s`)
+  - `ui_first`: `2.234s` to `2.299s` (median `2.271s`)
+- Decision: **kept**.
+
+### 20) Lazy-load non-interactive tool formatting and stream modules
+
+- Hypothesis: `run/tool`, `stream.transport`, and `runtime.queue` are not needed for first paint in interactive mode.
+- Change:
+  - Make `tool(part)` async and dynamically import `./run/tool` only when non-interactive tool output is rendered.
+  - In `runtime.ts`, dynamically import `./stream.transport` and `./runtime.queue` at execution time.
+- Result: slight/noise-level gain by itself; kept as part of the final import-deferral set.
+- Decision: **kept**.
+
 ## Kept delta vs baseline
 
-- Baseline `real`: `5.495s` -> kept median `3.893s` (`-1.602s`, ~`29.2%` faster)
-- Baseline `ui_first`: `5.088s` -> kept median `2.843s` (`-2.245s`, ~`44.1%` faster)
+- Baseline `real`: `5.495s` -> kept median `3.270s` (`-2.225s`, ~`40.5%` faster)
+- Baseline `ui_first`: `5.088s` -> kept median `2.271s` (`-2.817s`, ~`55.4%` faster)

@@ -1,9 +1,16 @@
 import { createCliRenderer, type CliRenderer, type ScrollbackWriter } from "@opentui/core"
 import { Locale } from "../../../util/locale"
-import { RunFooter } from "./footer"
 import { entrySplash, exitSplash, splashMeta } from "./splash"
 import { resolveRunTheme } from "./theme"
-import type { FooterKeybinds, PermissionReply, QuestionReject, QuestionReply, RunDiffStyle, RunInput } from "./types"
+import type {
+  FooterApi,
+  FooterKeybinds,
+  PermissionReply,
+  QuestionReject,
+  QuestionReply,
+  RunDiffStyle,
+  RunInput,
+} from "./types"
 import { formatModelLabel } from "./variant.shared"
 
 const FOOTER_HEIGHT = 7
@@ -42,7 +49,7 @@ export type LifecycleInput = {
 }
 
 export type Lifecycle = {
-  footer: RunFooter
+  footer: FooterApi
   close(input: { showExit: boolean }): Promise<void>
 }
 
@@ -124,7 +131,7 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
     consoleMode: "disabled",
     clearOnShutdown: false,
   })
-  const theme = await resolveRunTheme(renderer)
+  let theme = await resolveRunTheme(renderer)
   renderer.setBackgroundColor(theme.background)
   const state: SplashState = {
     entry: false,
@@ -144,6 +151,9 @@ export async function createRuntimeLifecycle(input: LifecycleInput): Promise<Lif
       background: theme.background,
     }),
   )
+  await renderer.idle().catch(() => {})
+
+  const { RunFooter } = await import("./footer")
 
   const labels = footerLabels({
     agent: input.agent,
