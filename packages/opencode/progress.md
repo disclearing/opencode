@@ -110,7 +110,24 @@
 - Result: broke command loading with `Provider.defaultLayer`/`Agent` initialization cycle on help/runtime paths.
 - Decision: **discarded**.
 
+### 12) Defer `Server` import in `run.ts` to request-time fetch wrappers
+
+- Hypothesis: static `run.ts` import of `server/server` still adds pre-paint module cost; deferring it to local fetch wrappers should improve UI paint.
+- Change:
+  - Remove top-level `Server` import from `run.ts`.
+  - Dynamically import `Server` inside both local fetch wrappers used by interactive-local and bootstrap execution paths.
+- Result (kept runs: `perf-exp12-1..3`):
+  - `real`: `3.887s` to `3.908s` (median `3.893s`)
+  - `ui_first`: `2.830s` to `2.861s` (median `2.843s`)
+- Decision: **kept**.
+
+### 13) Defer `Agent` import in `run.ts` for local-agent resolution
+
+- Hypothesis: removing top-level `Agent` import should shave additional startup time when `--agent` is not used.
+- Result (`perf-exp13-1..3`): noisy and slightly worse median `ui_first` than experiment 12.
+- Decision: **discarded**.
+
 ## Kept delta vs baseline
 
-- Baseline `real`: `5.495s` -> kept median `3.911s` (`-1.584s`, ~`28.8%` faster)
-- Baseline `ui_first`: `5.088s` -> kept median `2.979s` (`-2.109s`, ~`41.5%` faster)
+- Baseline `real`: `5.495s` -> kept median `3.893s` (`-1.602s`, ~`29.2%` faster)
+- Baseline `ui_first`: `5.088s` -> kept median `2.843s` (`-2.245s`, ~`44.1%` faster)

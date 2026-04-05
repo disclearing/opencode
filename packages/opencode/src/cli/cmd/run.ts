@@ -8,7 +8,6 @@ import { bootstrap } from "../bootstrap"
 import { EOL } from "os"
 import { Filesystem } from "../../util/filesystem"
 import { createOpencodeClient, type OpencodeClient, type ToolPart } from "@opencode-ai/sdk/v2"
-import { Server } from "../../server/server"
 import { Provider } from "../../provider/provider"
 import { Agent } from "../../agent/agent"
 import { Permission } from "../../permission"
@@ -627,6 +626,7 @@ export const RunCommand = cmd({
     if (args.interactive && !args.attach && !args.session && !args.continue) {
       const model = args.model ? Provider.parseModel(args.model) : undefined
       const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { Server } = await import("../../server/server")
         const request = new Request(input, init)
         return Server.Default().fetch(request)
       }) as typeof globalThis.fetch
@@ -665,6 +665,7 @@ export const RunCommand = cmd({
 
     await bootstrap(process.cwd(), async () => {
       const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { Server } = await import("../../server/server")
         const request = new Request(input, init)
         return Server.Default().fetch(request)
       }) as typeof globalThis.fetch
