@@ -15,18 +15,20 @@ prompt typed in footer
      RunFooter.handlePrompt()
   -> packages/opencode/src/cli/cmd/run/runtime.ts
      runPromptQueue.push() / pump()
-     - appends the user row locally
-     - calls runPromptTurn(...)
-  -> packages/opencode/src/cli/cmd/run/stream.ts
-     runPromptTurn()
-     - opens sdk.event.subscribe(...)
-     - sends sdk.session.prompt(...)
+      - appends the user row locally
+      - calls runPromptTurn(...)
+  -> packages/opencode/src/cli/cmd/run/stream.transport.ts
+      runPromptTurn()
+      - uses one session-level sdk.event.subscribe(...)
+      - sends sdk.session.prompt(...)
   -> server / SDK stream
+  -> packages/opencode/src/cli/cmd/run/session-data.ts
+      reduceSessionData(event)
+      -> commits[] ------------------------------+
+      -> footer.patch / footer.view -----------+ |
   -> packages/opencode/src/cli/cmd/run/stream.ts
-     reduceSessionData(event)
-     -> commits[] ------------------------------+
-     -> footer.patch / footer.view -----------+ |
-                                              | |
+     writeSessionOutput() ---------------------+ |
+                                               | |
 scrollback lane                               | |
   -> packages/opencode/src/cli/cmd/run/footer.ts
      RunFooter.append() / flush()
@@ -51,14 +53,15 @@ footer lane
 
 ## File Map
 
-| Stage                    | Files                                                                                                                                                                                                                  | Code                                                                      |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| CLI entry + session boot | `packages/opencode/src/cli/cmd/run.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`                                                                                                                                 | `RunCommand.handler`, `runInteractiveMode()`, `runInteractiveLocalMode()` |
-| Prompt submit            | `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`                                                                     | `onSubmit()`, `handlePrompt()`, `runPromptQueue()`                        |
-| Request + event stream   | `packages/opencode/src/cli/cmd/run/stream.ts`                                                                                                                                                                          | `runPromptTurn()`, `sdk.session.prompt()`, `sdk.event.subscribe()`        |
-| Event reduction          | `packages/opencode/src/cli/cmd/run/stream.ts`                                                                                                                                                                          | `reduceSessionData()`                                                     |
-| Scrollback rendering     | `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/scrollback.tsx`                                                                                                                      | `append()`, `flush()`, `entryWriter()`                                    |
-| Footer rendering         | `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.permission.tsx`, `packages/opencode/src/cli/cmd/run/footer.question.tsx` | `patch()`, `present()`, `RunFooterView`                                   |
+| Stage                    | Files                                                                                                                                                                                                                  | Code                                                                                           |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| CLI entry + session boot | `packages/opencode/src/cli/cmd/run.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`                                                                                                                                 | `RunCommand.handler`, `runInteractiveMode()`, `runInteractiveLocalMode()`                      |
+| Prompt submit            | `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/runtime.ts`                                                                     | `onSubmit()`, `handlePrompt()`, `runPromptQueue()`                                             |
+| Request + event stream   | `packages/opencode/src/cli/cmd/run/stream.transport.ts`                                                                                                                                                                | `createSessionTransport()`, `runPromptTurn()`, `sdk.session.prompt()`, `sdk.event.subscribe()` |
+| Event reduction          | `packages/opencode/src/cli/cmd/run/session-data.ts`                                                                                                                                                                    | `createSessionData()`, `reduceSessionData()`, `flushInterrupted()`                             |
+| Output wiring            | `packages/opencode/src/cli/cmd/run/stream.ts`                                                                                                                                                                          | `writeSessionOutput()`                                                                         |
+| Scrollback rendering     | `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/scrollback.tsx`                                                                                                                      | `append()`, `flush()`, `entryWriter()`                                                         |
+| Footer rendering         | `packages/opencode/src/cli/cmd/run/footer.ts`, `packages/opencode/src/cli/cmd/run/footer.view.tsx`, `packages/opencode/src/cli/cmd/run/footer.permission.tsx`, `packages/opencode/src/cli/cmd/run/footer.question.tsx` | `patch()`, `present()`, `RunFooterView`                                                        |
 
 ## What Direct Mode Should Own
 
@@ -328,22 +331,69 @@ run.ts
 
 If a module is not one of those four boxes, it should justify why it exists.
 
+Current branch status: closer to this shape, but not all the way there.
+`run.ts` now funnels direct mode through one `runInteractiveRuntime()` path in
+`runtime.ts`, `runtime.queue.ts` owns prompt sequencing,
+`stream.transport.ts` owns the single session subscription, and `stream.ts` is
+now just the output-wiring layer. The remaining gap is that `session-data.ts`
+still carries a direct-owned reducer/state model instead of sitting on top of
+one canonical session model.
+
 ## Short Version
 
 The branch is messy because it duplicates too much of the fullscreen session
 architecture and then adds another translation layer on top of that duplicate
 state. The fastest path to KISS is:
 
-- [ ] keep direct mode as a thin split-footer shell
+- [x] keep direct mode as a thin split-footer shell
+      Status: `runtime.ts` is now mostly orchestration, and the renderer shell,
+      prompt queue, footer controller, and scrollback projector are split into
+      smaller run-adjacent modules.
+
 - [ ] keep one session model
-- [ ] keep one footer state owner
-- [ ] render typed data instead of parsing synthetic transcript strings
-- [ ] delete duplicate prompt, permission, question, variant, and keybind logic
+      Blocker: `session-data.ts` still owns the direct-mode `SessionData`
+      reducer, permission/question queues, and footer selection inputs, and
+      `runtime.boot.ts` still reconstructs prompt history and variant from
+      session messages instead of consuming one canonical session model.
+
+- [x] keep one footer state owner
+      Status: `footer.ts` owns `FooterState` and `FooterView`, and runtime/stream
+      code only drive it through `footer.event(...)`.
+
+- [x] render typed data instead of parsing synthetic transcript strings
+      Status: `StreamCommit` now carries typed tool/interruption state, and
+      `scrollback.tsx` / `scrollback.format.ts` render from those fields without
+      sentinel transcript strings.
+
+- [x] delete duplicate prompt, permission, question, variant, and keybind logic
+      Status: direct mode now routes those concerns through
+      `prompt.shared.ts`, `permission.shared.ts`, `question.shared.ts`, and
+      `variant.shared.ts`. Fullscreen adoption is still a follow-up, but the
+      direct-mode branch is on the intended dedupe path.
 
 ## Todo
 
-- [ ] collapse runtime and subscriptions
+- [x] collapse runtime and subscriptions
+      Status: `runInteractiveRuntime()` is the single direct runtime entry and
+      `stream.transport.ts` opens one session-level `sdk.event.subscribe(...)`
+      stream for the run.
+
 - [ ] keep one canonical session model plus a small direct-mode projector
-- [ ] simplify footer ownership and UI
-- [ ] consolidate rendering helpers and tool policy
+      Blocker: `stream.ts` is now the small direct-mode projector, but
+      `session-data.ts` is still a direct-owned session/event store rather than
+      one canonical model shared across the session stack.
+
+- [x] simplify footer ownership and UI
+      Status: `RunFooterView` is down to a view shell, while prompt,
+      permission, and question behavior live in focused modules and `footer.ts`
+      owns the live footer state.
+
+- [x] consolidate rendering helpers and tool policy
+      Status: tool presentation is centralized in `tool.ts`, `scrollback.tsx`
+      is down to writer selection, and `permission.shared.ts` pulls permission
+      copy from the same typed tool helpers.
+
 - [ ] trim edge features and re-scope tests
+      Blocker: `trace.ts` and `splash.ts` are already edge-only, but the test
+      re-scope is still deferred. This review is intentionally ignoring tests
+      for now.

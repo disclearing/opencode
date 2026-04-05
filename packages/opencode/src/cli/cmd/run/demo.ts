@@ -1,6 +1,7 @@
 import path from "path"
 import type { Event } from "@opencode-ai/sdk/v2"
-import { createSessionData, reduceSessionData, type SessionData } from "./stream"
+import { createSessionData, reduceSessionData, type SessionData } from "./session-data"
+import { writeSessionOutput } from "./stream"
 import type { FooterApi, PermissionReply, QuestionReject, QuestionReply, RunDemo } from "./types"
 
 const KINDS = ["text", "reasoning", "bash", "write", "edit", "patch", "task", "todo", "question", "error", "mix"]
@@ -126,24 +127,12 @@ function feed(state: State, event: Event): void {
     limits: state.limits(),
   })
   state.data = out.data
-
-  for (const commit of out.commits) {
-    state.footer.append(commit)
-  }
-
-  if (out.footer?.patch) {
-    state.footer.event({
-      type: "stream.patch",
-      patch: out.footer.patch,
-    })
-  }
-
-  if (out.footer?.view) {
-    state.footer.event({
-      type: "stream.view",
-      view: out.footer.view,
-    })
-  }
+  writeSessionOutput(
+    {
+      footer: state.footer,
+    },
+    out,
+  )
 }
 
 function open(state: State): string {

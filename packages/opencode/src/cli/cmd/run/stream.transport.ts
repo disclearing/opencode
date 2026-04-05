@@ -1,5 +1,6 @@
 import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2"
-import { createSessionData, flushInterrupted, reduceSessionData, type SessionData } from "./stream"
+import { createSessionData, flushInterrupted, reduceSessionData } from "./session-data"
+import { writeSessionOutput } from "./stream"
 import type { FooterApi, RunFilePart, RunInput, StreamCommit } from "./types"
 
 type Trace = {
@@ -35,7 +36,7 @@ export type SessionTurnInput = {
 }
 
 export type SessionTransport = {
-  runPromptTurn(input: SessionTurnInput): Promise<SessionData>
+  runPromptTurn(input: SessionTurnInput): Promise<void>
   close(): Promise<void>
 }
 
@@ -141,13 +142,6 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
     next?.reject(error)
   }
 
-  const write = (commits: StreamCommit[]) => {
-    for (const commit of commits) {
-      input.trace?.write("ui.commit", commit)
-      input.footer.append(commit)
-    }
-  }
-
   const mark = (event: Event) => {
     if (
       event.type !== "session.status" ||
@@ -170,7 +164,16 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
   const flush = (type: "turn.abort" | "turn.cancel") => {
     const commits: StreamCommit[] = []
     flushInterrupted(data, commits)
-    write(commits)
+    writeSessionOutput(
+      {
+        footer: input.footer,
+        trace: input.trace,
+      },
+      {
+        data,
+        commits,
+      },
+    )
     input.trace?.write(type, {
       sessionID: input.sessionID,
     })
@@ -201,29 +204,13 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
           })
         }
 
-        write(next.commits)
-
-        if (next.footer?.patch) {
-          const patch =
-            typeof next.footer.patch.status === "string" && next.footer.patch.phase === undefined
-              ? { phase: "running" as const, ...next.footer.patch }
-              : next.footer.patch
-          input.trace?.write("ui.patch", patch)
-          input.footer.event({
-            type: "stream.patch",
-            patch,
-          })
-        }
-
-        if (next.footer?.view) {
-          input.trace?.write("ui.patch", {
-            view: next.footer.view,
-          })
-          input.footer.event({
-            type: "stream.view",
-            view: next.footer.view,
-          })
-        }
+        writeSessionOutput(
+          {
+            footer: input.footer,
+            trace: input.trace,
+          },
+          next,
+        )
 
         mark(event)
       }
@@ -239,9 +226,9 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
     }
   })()
 
-  const runPromptTurn = async (next: SessionTurnInput): Promise<SessionData> => {
+  const runPromptTurn = async (next: SessionTurnInput): Promise<void> => {
     if (next.signal?.aborted || input.footer.isClosed) {
-      return data
+      return
     }
 
     if (fault) {
@@ -286,7 +273,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
           wait = undefined
         }
         flush("turn.abort")
-        return data
+        return
       }
 
       if (!input.footer.isClosed && !data.announced) {
@@ -303,7 +290,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         if (wait === item) {
           wait = undefined
         }
-        return data
+        return
       }
 
       const state = await waitTurn(item.done, turn.signal)
@@ -315,7 +302,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
         flush("turn.abort")
       }
 
-      return data
+      return
     } catch (error) {
       if (wait === item) {
         wait = undefined
@@ -324,7 +311,7 @@ export async function createSessionTransport(input: StreamInput): Promise<Sessio
       const canceled = turn.signal.aborted || next.signal?.aborted === true || input.footer.isClosed
       if (canceled) {
         flush("turn.cancel")
-        return data
+        return
       }
 
       if (error === fault) {
