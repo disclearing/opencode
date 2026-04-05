@@ -185,6 +185,12 @@
 - Result: slight/noise-level gain by itself; kept as part of the final import-deferral set.
 - Decision: **kept**.
 
+### 21) Preload `bootstrap` via dynamic import promise
+
+- Hypothesis: replace static `bootstrap` import with `const bootstrapTask = import("../bootstrap")` to keep ordering but remove blocking static load.
+- Result: still broke startup with config/instance initialization cycles (`Config.defaultLayer`, `Config.Keybinds`, `Log.create` undefined errors).
+- Decision: **discarded**.
+
 ## Kept delta vs baseline
 
 - Baseline `real`: `5.495s` -> kept median `3.270s` (`-2.225s`, ~`40.5%` faster)
