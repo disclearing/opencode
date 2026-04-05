@@ -294,6 +294,36 @@ test("env variable takes precedence, config merges options", async () => {
   })
 })
 
+test("t3 provider loads from env cookie", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+        }),
+      )
+    },
+  })
+
+  const cookie = "foo=bar; convex-session-id=convex-123"
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      Env.set("T3_COOKIE", cookie)
+    },
+    fn: async () => {
+      const providers = await Provider.list()
+      const info = providers[ProviderID.t3]
+      expect(info).toBeDefined()
+      expect(info.source).toBe("env")
+      expect(info.options.cookie).toBe(cookie)
+      expect(info.options.convexSessionId).toBe("convex-123")
+      expect(Object.keys(info.models).length).toBeGreaterThan(0)
+    },
+  })
+})
+
 test("getModel returns model for valid provider/model", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

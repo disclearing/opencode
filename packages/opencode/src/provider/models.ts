@@ -88,6 +88,40 @@ export namespace ModelsDev {
 
   export type Provider = z.infer<typeof Provider>
 
+  function t3() {
+    const model = (id: string, name: string): Model => ({
+      id,
+      name,
+      release_date: "",
+      attachment: false,
+      reasoning: true,
+      temperature: false,
+      tool_call: false,
+      limit: {
+        context: 200000,
+        output: 16000,
+      },
+      modalities: {
+        input: ["text"],
+        output: ["text"],
+      },
+      options: {},
+    })
+
+    return {
+      id: "t3",
+      name: "t3.chat",
+      env: ["T3_COOKIE"],
+      npm: "@opencode/t3",
+      api: "https://t3.chat",
+      models: {
+        "claude-4-sonnet": model("claude-4-sonnet", "Claude 4 Sonnet"),
+        "gemini-2.5-flash-lite": model("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"),
+        "gpt-4o": model("gpt-4o", "GPT-4o"),
+      },
+    } as Provider
+  }
+
   function url() {
     return Flag.OPENCODE_MODELS_URL || "https://models.dev"
   }
@@ -131,8 +165,9 @@ export namespace ModelsDev {
   })
 
   export async function get() {
-    const result = await Data()
-    return result as Record<string, Provider>
+    const result = (await Data()) as Record<string, Provider>
+    if (!result.t3) result.t3 = t3()
+    return result
   }
 
   export async function refresh(force = false) {

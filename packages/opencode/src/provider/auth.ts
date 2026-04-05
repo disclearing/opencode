@@ -76,6 +76,10 @@ export namespace ProviderAuth {
   )
 
   export const OauthCallbackFailed = NamedError.create("ProviderAuthOauthCallbackFailed", z.object({}))
+  export const ApiAuthorizeFailed = NamedError.create(
+    "ProviderAuthApiAuthorizeFailed",
+    z.object({ providerID: ProviderID.zod }),
+  )
 
   export const ValidationFailed = NamedError.create(
     "ProviderAuthValidationFailed",
@@ -90,6 +94,7 @@ export namespace ProviderAuth {
     | InstanceType<typeof OauthMissing>
     | InstanceType<typeof OauthCodeMissing>
     | InstanceType<typeof OauthCallbackFailed>
+    | InstanceType<typeof ApiAuthorizeFailed>
     | InstanceType<typeof ValidationFailed>
 
   type Hook = NonNullable<Hooks["auth"]>
@@ -169,7 +174,6 @@ export namespace ProviderAuth {
       }) {
         const { hooks, pending } = yield* InstanceState.get(state)
         const method = hooks[input.providerID].methods[input.method]
-        if (method.type !== "oauth") return
 
         if (method.prompts && input.inputs) {
           for (const prompt of method.prompts) {
@@ -178,6 +182,19 @@ export namespace ProviderAuth {
               if (error) return yield* Effect.fail(new ValidationFailed({ field: prompt.key, message: error }))
             }
           }
+        }
+
+        if (method.type === "api") {
+          if (!method.authorize) return
+          const result = yield* Effect.promise(() => method.authorize!(input.inputs))
+          if (result.type !== "success") {
+            return yield* Effect.fail(new ApiAuthorizeFailed({ providerID: input.providerID }))
+          }
+          yield* auth.set(result.provider ?? input.providerID, {
+            type: "api",
+            key: result.key,
+          })
+          return
         }
 
         const result = yield* Effect.promise(() => method.authorize(input.inputs))

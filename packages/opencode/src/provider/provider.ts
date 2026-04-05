@@ -34,6 +34,7 @@ import { createOpenAI } from "@ai-sdk/openai"
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
 import { createOpenaiCompatible as createGitHubCopilotOpenAICompatible } from "./sdk/copilot"
+import { createT3 } from "./sdk/t3"
 import { createXai } from "@ai-sdk/xai"
 import { createMistral } from "@ai-sdk/mistral"
 import { createGroq } from "@ai-sdk/groq"
@@ -147,6 +148,7 @@ export namespace Provider {
     "gitlab-ai-provider": createGitLab,
     "@ai-sdk/github-copilot": createGitHubCopilotOpenAICompatible,
     "venice-ai-sdk-provider": createVenice,
+    "@opencode/t3": createT3,
   }
 
   type CustomModelLoader = (sdk: any, modelID: string, options?: Record<string, any>) => Promise<any>
@@ -167,6 +169,84 @@ export namespace Provider {
 
   function useLanguageModel(sdk: any) {
     return sdk.responses === undefined && sdk.chat === undefined
+  }
+
+  function cookieValue(raw: string | undefined, key: string) {
+    if (!raw) return
+    for (const part of raw.split(";")) {
+      const item = part.trim()
+      if (!item) continue
+      const i = item.indexOf("=")
+      if (i === -1) continue
+      if (item.slice(0, i).trim() !== key) continue
+      return item.slice(i + 1).trim()
+    }
+  }
+
+  function t3Model(id: string, name: string): Model {
+    return {
+      id: ModelID.make(id),
+      providerID: ProviderID.t3,
+      api: {
+        id,
+        url: "https://t3.chat",
+        npm: "@opencode/t3",
+      },
+      name,
+      family: "",
+      capabilities: {
+        temperature: false,
+        reasoning: true,
+        attachment: false,
+        toolcall: false,
+        input: {
+          text: true,
+          audio: false,
+          image: false,
+          video: false,
+          pdf: false,
+        },
+        output: {
+          text: true,
+          audio: false,
+          image: false,
+          video: false,
+          pdf: false,
+        },
+        interleaved: false,
+      },
+      cost: {
+        input: 0,
+        output: 0,
+        cache: { read: 0, write: 0 },
+      },
+      limit: {
+        context: 200_000,
+        output: 16_000,
+      },
+      status: "active",
+      options: {},
+      headers: {},
+      release_date: "",
+      variants: {},
+    }
+  }
+
+  function t3Provider(): Info {
+    return {
+      id: ProviderID.t3,
+      source: "custom",
+      name: "t3.chat",
+      env: ["T3_COOKIE"],
+      options: {
+        baseURL: "https://t3.chat",
+      },
+      models: {
+        "claude-4-sonnet": t3Model("claude-4-sonnet", "Claude 4 Sonnet"),
+        "gemini-2.5-flash-lite": t3Model("gemini-2.5-flash-lite", "Gemini 2.5 Flash Lite"),
+        "gpt-4o": t3Model("gpt-4o", "GPT-4o"),
+      },
+    }
   }
 
   function custom(dep: CustomDep): Record<string, CustomLoader> {
@@ -219,6 +299,33 @@ export namespace Provider {
           },
           options: {},
         }),
+      t3: Effect.fnUntraced(function* (input: Info) {
+        const cfg = (yield* dep.config()).provider?.[input.id]
+        const auth = yield* dep.auth(input.id)
+        const hcaptchaAuth = yield* dep.auth("t3-hcaptcha")
+        const authKey = auth?.type === "api" ? auth.key : undefined
+        const cookie =
+          cfg?.options?.cookie ??
+          cfg?.options?.apiKey ??
+          (authKey?.includes("=") ? authKey : undefined) ??
+          Env.get("T3_COOKIE")
+        const convexSessionId =
+          cfg?.options?.convexSessionId ?? Env.get("T3_CONVEX_SESSION_ID") ?? cookieValue(cookie, "convex-session-id")
+        const hcaptchaToken =
+          cfg?.options?.hcaptchaToken ??
+          (hcaptchaAuth?.type === "api" ? hcaptchaAuth.key : undefined) ??
+          (authKey?.startsWith("P1_") ? authKey : undefined) ??
+          Env.get("T3_HCAPTCHA_TOKEN")
+
+        return {
+          autoload: Boolean(cookie),
+          options: {
+            cookie,
+            convexSessionId,
+            hcaptchaToken,
+          },
+        }
+      }),
       "github-copilot": () =>
         Effect.succeed({
           autoload: false,
@@ -985,6 +1092,9 @@ export namespace Provider {
           const cfg = yield* config.get()
           const modelsDev = yield* Effect.promise(() => ModelsDev.get())
           const database = mapValues(modelsDev, fromModelsDevProvider)
+          if (!database[ProviderID.t3]) {
+            database[ProviderID.t3] = t3Provider()
+          }
 
           const providers: Record<ProviderID, Info> = {} as Record<ProviderID, Info>
           const languages = new Map<string, LanguageModelV3>()
