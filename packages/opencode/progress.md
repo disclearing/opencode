@@ -61,22 +61,24 @@
 - Change:
   - Only import `AttachCommand` when needed (`attach`, top-level help/completion).
   - Only import `TuiThreadCommand` when needed (no explicit command, top-level help/completion).
-- Raw result (before warning fix):
+- Result (kept runs: `perf-exp7-1..3`):
   - `real`: `4.348s` to `4.473s`
   - `first_output`: `3.871s` to `3.990s`
+  - medians: `real` `4.432s`, `first_output` `3.954s`
 - Side effect: exposed a benign external plugin warning (`Could not find any skills directories...`).
+- Decision: **kept**.
 
 ### 8) Filter benign `opencode-skills` directory warning during plugin init
 
 - Hypothesis: keep experiment 7 speedup without noisy startup output.
 - Change: wrap plugin server init with a `console.warn` filter for the known benign message.
-- Result (kept runs: `perf-exp7c-1..3`):
+- Result (`perf-exp7c-1..3`):
   - `real`: `4.383s` to `4.444s` (median `4.435s`)
   - `first_output`: `3.979s` to `4.046s` (median `4.028s`)
   - No warning printed before UI startup.
-- Decision: **kept**.
+- Decision: **discarded** (user preferred visible warning over suppression).
 
 ## Kept delta vs baseline
 
-- Baseline `real`: `5.495s` -> kept median `4.435s` (`-1.060s`, ~`19.3%` faster)
-- Baseline `first_output`: `5.088s` -> kept median `4.028s` (`-1.060s`, ~`20.8%` faster)
+- Baseline `real`: `5.495s` -> kept median `4.432s` (`-1.063s`, ~`19.3%` faster)
+- Baseline `first_output`: `5.088s` -> kept median `3.954s` (`-1.134s`, ~`22.3%` faster)
