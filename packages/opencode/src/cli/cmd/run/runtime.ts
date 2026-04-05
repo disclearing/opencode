@@ -9,20 +9,14 @@ import type { RunInput } from "./types"
 /** @internal Exported for testing */
 export { pickVariant, resolveVariant } from "./variant.shared"
 
+/** @internal Exported for testing */
+export { runPromptQueue } from "./runtime.queue"
+
 type BootContext = Pick<RunInput, "sdk" | "sessionID" | "sessionTitle" | "agent" | "model" | "variant">
 
 type RunRuntimeInput = {
   boot: () => Promise<BootContext>
   afterPaint?: (ctx: BootContext) => Promise<void> | void
-  preview?: {
-    sessionID: string
-    sessionTitle?: string
-    first: boolean
-    history: string[]
-    agent: string | undefined
-    model: RunInput["model"]
-    variant: string | undefined
-  }
   files: RunInput["files"]
   initialInput?: string
   thinking: boolean
@@ -49,42 +43,31 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   const log = trace()
   const keybindTask = resolveFooterKeybinds()
   const diffTask = resolveDiffStyle()
-  const ctxTask = input.boot()
-  const base = input.preview ?? {
-    sessionID: "pending",
-    sessionTitle: undefined,
-    first: true,
-    history: [],
-    agent: undefined,
-    model: undefined,
-    variant: undefined,
-  }
+  const ctx = await input.boot()
+  const modelTask = resolveModelInfo(ctx.sdk, ctx.model)
+  const sessionTask = resolveSessionInfo(ctx.sdk, ctx.sessionID, ctx.model)
+  const savedTask = resolveSavedVariant(ctx.model)
   let variants: string[] = []
   let limits: Record<string, number> = {}
   let aborting = false
-  let shown = !base.first
+  let shown = false
   let demo: ReturnType<typeof createRunDemo> | undefined
-  let ctx: BootContext | undefined
-  let activeVariant = base.variant
-
-  const ready = async () => {
-    if (ctx) {
-      return ctx
-    }
-
-    ctx = await ctxTask
-    return ctx
-  }
-
-  const [keybinds, diffStyle] = await Promise.all([keybindTask, diffTask])
+  const [keybinds, diffStyle, session, savedVariant] = await Promise.all([
+    keybindTask,
+    diffTask,
+    sessionTask,
+    savedTask,
+  ])
+  shown = !session.first
+  let activeVariant = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
 
   const shell = await createRuntimeLifecycle({
-    sessionID: base.sessionID,
-    sessionTitle: base.sessionTitle,
-    first: base.first,
-    history: base.history,
-    agent: base.agent,
-    model: base.model,
+    sessionID: ctx.sessionID,
+    sessionTitle: ctx.sessionTitle,
+    first: session.first,
+    history: session.history,
+    agent: ctx.agent,
+    model: ctx.model,
     variant: activeVariant,
     keybinds,
     diffStyle,
@@ -93,39 +76,35 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
         return
       }
 
-      const now = await ready()
       log?.write("send.permission.reply", next)
-      await now.sdk.permission.reply(next)
+      await ctx.sdk.permission.reply(next)
     },
     onQuestionReply: async (next) => {
       if (demo?.questionReply(next)) {
         return
       }
 
-      const now = await ready()
-      await now.sdk.question.reply(next)
+      await ctx.sdk.question.reply(next)
     },
     onQuestionReject: async (next) => {
       if (demo?.questionReject(next)) {
         return
       }
 
-      const now = await ready()
-      await now.sdk.question.reject(next)
+      await ctx.sdk.question.reject(next)
     },
     onCycleVariant: () => {
-      const model = ctx?.model ?? base.model
-      if (!model || variants.length === 0) {
+      if (!ctx.model || variants.length === 0) {
         return {
           status: "no variants available",
         }
       }
 
       activeVariant = cycleVariant(activeVariant, variants)
-      saveVariant(model, activeVariant)
+      saveVariant(ctx.model, activeVariant)
       return {
         status: activeVariant ? `variant ${activeVariant}` : "variant default",
-        modelLabel: formatModelLabel(model, activeVariant),
+        modelLabel: formatModelLabel(ctx.model, activeVariant),
       }
     },
     onInterrupt: () => {
@@ -134,12 +113,10 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
       }
 
       aborting = true
-      void ready()
-        .then((now) =>
-          now.sdk.session.abort({
-            sessionID: now.sessionID,
-          }),
-        )
+      void ctx.sdk.session
+        .abort({
+          sessionID: ctx.sessionID,
+        })
         .catch(() => {})
         .finally(() => {
           aborting = false
@@ -148,46 +125,38 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
   })
   const footer = shell.footer
 
-  const now = await ready()
-  const modelTask = resolveModelInfo(now.sdk, now.model)
-  const sessionTask = resolveSessionInfo(now.sdk, now.sessionID, now.model)
-  const savedTask = resolveSavedVariant(now.model)
-  const [session, savedVariant] = await Promise.all([sessionTask, savedTask])
-  shown = shown || !session.first
-  activeVariant = resolveVariant(now.variant, session.variant, savedVariant, variants)
-
   if (input.demo) {
     demo = createRunDemo({
       mode: input.demo,
       text: input.demoText,
       footer,
-      sessionID: now.sessionID,
+      sessionID: ctx.sessionID,
       thinking: input.thinking,
       limits: () => limits,
     })
   }
 
   if (input.afterPaint) {
-    void Promise.resolve(input.afterPaint(now)).catch(() => {})
+    void Promise.resolve(input.afterPaint(ctx)).catch(() => {})
   }
 
   void modelTask.then((info) => {
     variants = info.variants
     limits = info.limits
 
-    const next = resolveVariant(now.variant, session.variant, savedVariant, variants)
+    const next = resolveVariant(ctx.variant, session.variant, savedVariant, variants)
     if (next === activeVariant) {
       return
     }
 
     activeVariant = next
-    if (!now.model || footer.isClosed) {
+    if (!ctx.model || footer.isClosed) {
       return
     }
 
     footer.event({
       type: "model",
-      model: formatModelLabel(now.model, activeVariant),
+      model: formatModelLabel(ctx.model, activeVariant),
     })
   })
 
@@ -195,8 +164,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
     const mod = await import("./stream.transport")
     let includeFiles = true
     const stream = await mod.createSessionTransport({
-      sdk: now.sdk,
-      sessionID: now.sessionID,
+      sdk: ctx.sdk,
+      sessionID: ctx.sessionID,
       thinking: input.thinking,
       limits: () => limits,
       footer,
@@ -223,8 +192,8 @@ async function runInteractiveRuntime(input: RunRuntimeInput): Promise<void> {
 
           try {
             await stream.runPromptTurn({
-              agent: now.agent,
-              model: now.model,
+              agent: ctx.agent,
+              model: ctx.model,
               variant: activeVariant,
               prompt,
               files: input.files,
@@ -257,15 +226,6 @@ export async function runInteractiveLocalMode(input: RunLocalInput): Promise<voi
   })
 
   return runInteractiveRuntime({
-    preview: {
-      sessionID: "pending",
-      sessionTitle: undefined,
-      first: true,
-      history: [],
-      agent: input.agent,
-      model: input.model,
-      variant: input.variant,
-    },
     files: input.files,
     initialInput: input.initialInput,
     thinking: input.thinking,
